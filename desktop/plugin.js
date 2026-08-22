@@ -1298,42 +1298,6 @@ function TodayHoverCard({ value }) {
   })
 }
 
-function CycleHoverCard({ cycleMap, activeModel, prefs = DISPLAY_DEFAULT }) {
-  const rows = modelCycleRows(cycleMap).filter(row => modelAllowed(row.name, prefs))
-  return jsxs('div', {
-    className: 'flex w-full flex-col gap-2 text-[0.75rem] leading-snug text-(--ui-text-primary)',
-    children: [
-      jsx('div', { className: 'font-medium', children: '本周期 Token' }),
-      jsx('div', {
-        className: 'text-[0.625rem] text-(--ui-text-quaternary)',
-        children: '官方重置窗内已用，不是自然周'
-      }),
-      rows.length
-        ? rows.map(row =>
-            jsxs('div', {
-              className: 'flex items-baseline justify-between gap-3',
-              children: [
-                jsxs('span', {
-                  className: 'min-w-0 truncate',
-                  style: {
-                    color: activeModel && row.name === activeModel
-                      ? 'var(--ui-text-primary)'
-                      : 'var(--ui-text-quaternary)'
-                  },
-                  children: [row.name, ' · ', cycleKindLabel(row.kind)]
-                }),
-                jsx('span', { className: 'shrink-0 tabular-nums', children: fmtInteger(row.tokens) })
-              ]
-            }, row.name)
-          )
-        : jsx('div', {
-            className: 'text-(--ui-text-quaternary)',
-            children: '还没有官方窗内的本地 Token'
-          })
-    ]
-  })
-}
-
 function fmtResetPair(resetAt) {
   const compact = fmtResetCompact(resetAt)
   const clock = fmtTime(resetAt)

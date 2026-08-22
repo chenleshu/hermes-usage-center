@@ -416,10 +416,9 @@ def aggregate_reset_cycles(
         provider = canonical_provider(row["billing_provider"], row["model"])
         model = str(row["model"] or "unknown")
         window = provider_windows.get(provider)
-        if window:
-            start, kind, reset, label = window["start"], window["kind"], window["reset_at"], window.get("label") or "额度"
-        else:
-            start, kind, reset, label = fallback_start, "calendar_week", None, "自然周"
+        if not window:
+            continue
+        start, kind, reset, label = window["start"], window["kind"], window["reset_at"], window.get("label") or "额度"
         if started < start:
             continue
         if provider not in by_provider:
