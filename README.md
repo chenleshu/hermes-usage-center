@@ -24,7 +24,7 @@ Hermes Desktop 的模型用量插件：侧栏整页看板 + 右下角状态条�
 需要 Hermes Desktop ≥ 0.20.4。
 
 ```bash
-hermes plugins install OWNER/hermes-usage-center
+hermes plugins install chenleshu/hermes-usage-center
 hermes plugins enable usage-center
 ```
 
@@ -34,10 +34,8 @@ hermes plugins enable usage-center
 一键安装（本机已注册 `hermes://`）：
 
 ```
-hermes://plugin/install?repo=OWNER/hermes-usage-center&enable=1
+hermes://plugin/install?repo=chenleshu/hermes-usage-center&enable=1
 ```
-
-把 `OWNER` 换成仓库所属 GitHub 用户名。发布后本 README 会改成真实地址。
 
 ## 口径
 
