@@ -417,6 +417,12 @@ def aggregate_usage(
     provider_period_sessions: dict[str, dict[str, set[str]]] = defaultdict(
         lambda: {name: set() for name in starts}
     )
+    model_periods: dict[str, dict[str, dict[str, Any]]] = defaultdict(
+        lambda: {name: _empty_totals() for name in starts}
+    )
+    model_period_sessions: dict[str, dict[str, set[str]]] = defaultdict(
+        lambda: {name: set() for name in starts}
+    )
 
     for row in rows:
         started = datetime.fromtimestamp(float(row["started_at"]), tz=local_tz)
@@ -436,11 +442,14 @@ def aggregate_usage(
     for row in usage_rows:
         started = datetime.fromtimestamp(float(row["started_at"]), tz=local_tz)
         provider = str(row["billing_provider"] or "unknown")
+        model = str(row["model"] or "unknown")
         if started >= starts["month"]:
             for name, boundary in starts.items():
                 if started >= boundary:
                     _add_row(provider_periods[provider][name], row)
                     provider_period_sessions[provider][name].add(str(row["id"]))
+                    _add_row(model_periods[model][name], row)
+                    model_period_sessions[model][name].add(str(row["id"]))
         if started < rolling_starts["90d"]:
             continue
         for dimension, column in (
@@ -461,9 +470,13 @@ def aggregate_usage(
             key=lambda item: (-item["total_tokens"], item["name"]),
         )
 
-    for provider, buckets in provider_periods.items():
-        for name, total in buckets.items():
-            total["sessions"] = len(provider_period_sessions[provider][name])
+    for buckets_map, session_map in (
+        (provider_periods, provider_period_sessions),
+        (model_periods, model_period_sessions),
+    ):
+        for key, buckets in buckets_map.items():
+            for name, total in buckets.items():
+                total["sessions"] = len(session_map[key][name])
 
     return {
         "periods": periods,
@@ -477,6 +490,10 @@ def aggregate_usage(
         "by_provider_periods": {
             provider: buckets
             for provider, buckets in sorted(provider_periods.items())
+        },
+        "by_model_periods": {
+            model: buckets
+            for model, buckets in sorted(model_periods.items())
         },
         "by_source": _dimension_rows("source"),
         "quality": {
@@ -718,6 +735,7 @@ def build_summary(
             "by_model": [],
             "by_provider": [],
             "by_provider_periods": {},
+            "by_model_periods": {},
             "by_source": [],
             "quality": {"local_usage": "unavailable"},
             "reason": f"Local usage lookup failed: {type(exc).__name__}",

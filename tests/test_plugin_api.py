@@ -104,6 +104,9 @@ class UsageAggregationTests(unittest.TestCase):
         self.assertEqual(result["by_provider_periods"]["openai-codex"]["week"]["input_tokens"], 300)
         self.assertEqual(result["by_provider_periods"]["openai-codex"]["month"]["input_tokens"], 600)
         self.assertEqual(result["by_provider_periods"]["openai-codex"]["today"]["sessions"], 1)
+        self.assertEqual(result["by_model_periods"]["gpt-5.6-sol"]["today"]["input_tokens"], 100)
+        self.assertEqual(result["by_model_periods"]["gpt-5.6-sol"]["week"]["input_tokens"], 300)
+        self.assertEqual(result["by_model_periods"]["gpt-5.6-sol"]["month"]["input_tokens"], 600)
 
     def test_model_distribution_uses_session_model_usage_when_available(self):
         api = load_plugin_api()
@@ -162,6 +165,8 @@ class UsageAggregationTests(unittest.TestCase):
         self.assertEqual(current["model"], "model-b")
         self.assertEqual(current["provider"], "provider-b")
         self.assertEqual(current["total_tokens"], 330)
+        self.assertEqual(result["by_model_periods"]["model-b"]["today"]["input_tokens"], 200)
+        self.assertEqual(result["by_model_periods"]["model-a"]["today"]["input_tokens"], 100)
 
 
 class XaiUsageParsingTests(unittest.TestCase):

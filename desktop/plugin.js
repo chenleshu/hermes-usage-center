@@ -289,6 +289,18 @@ function PeriodTile({ title, value, mode = 'natural' }) {
   })
 }
 
+function modelCycleRows(periodsMap) {
+  return Object.entries(periodsMap || {})
+    .map(([name, periods]) => ({
+      name,
+      today: periods?.today,
+      week: periods?.week,
+      month: periods?.month,
+      weekTokens: totalTokens(periods?.week)
+    }))
+    .sort((a, b) => b.weekTokens - a.weekTokens || a.name.localeCompare(b.name))
+}
+
 function PeriodRibbon({ periods, rolling }) {
   const items = [
     { title: '今日', value: periods?.today, mode: 'natural' },
@@ -647,6 +659,83 @@ function DistributionPanel({ rows, title }) {
   })
 }
 
+function ModelCyclePanel({ periodsMap, activeModel }) {
+  const rows = modelCycleRows(periodsMap)
+  return jsx(Panel, {
+    className: 'flex h-full min-h-0 flex-col px-2.5 py-2',
+    children: jsxs('div', {
+      className: 'flex h-full min-h-0 flex-col',
+      children: [
+        jsxs('div', {
+          className: 'flex items-baseline justify-between gap-2',
+          children: [
+            jsx('h3', { className: 'text-xs font-semibold', children: '本周期 Token' }),
+            jsx('span', {
+              className: 'text-[0.5rem]',
+              style: { color: 'var(--ui-text-quaternary)' },
+              children: '自然周 · 周一 00:00 · 全部模型'
+            })
+          ]
+        }),
+        rows.length
+          ? jsxs('div', {
+              className: 'mt-1.5 min-h-0 flex-1 overflow-auto',
+              children: [
+                jsxs('div', {
+                  className: 'grid gap-2 pb-1 text-[0.5rem]',
+                  style: {
+                    gridTemplateColumns: 'minmax(0, 1.6fr) repeat(3, minmax(4.5rem, 1fr))',
+                    color: 'var(--ui-text-quaternary)'
+                  },
+                  children: [
+                    jsx('span', { children: '模型' }),
+                    jsx('span', { className: 'text-right', children: '今日' }),
+                    jsx('span', { className: 'text-right', children: '本周' }),
+                    jsx('span', { className: 'text-right', children: '本月' })
+                  ]
+                }),
+                rows.map(row => {
+                  const on = activeModel && row.name === activeModel
+                  return jsxs('div', {
+                    className: 'grid items-center gap-2 border-t py-1 text-[0.625rem]',
+                    style: {
+                      gridTemplateColumns: 'minmax(0, 1.6fr) repeat(3, minmax(4.5rem, 1fr))',
+                      borderColor: 'var(--ui-stroke-secondary)',
+                      color: on ? 'var(--ui-text-primary)' : 'var(--ui-text-secondary)'
+                    },
+                    title: `${row.name} · 今日 ${fmtInteger(totalTokens(row.today))} · 本周 ${fmtInteger(row.weekTokens)} · 本月 ${fmtInteger(totalTokens(row.month))}`,
+                    children: [
+                      jsx('span', {
+                        className: 'truncate font-medium',
+                        children: row.name
+                      }),
+                      jsx('span', {
+                        className: 'text-right tabular-nums',
+                        children: fmtCount(totalTokens(row.today))
+                      }),
+                      jsx('span', {
+                        className: 'text-right font-semibold tabular-nums',
+                        children: fmtCount(row.weekTokens)
+                      }),
+                      jsx('span', {
+                        className: 'text-right tabular-nums',
+                        children: fmtCount(totalTokens(row.month))
+                      })
+                    ]
+                  }, row.name)
+                })
+              ]
+            })
+          : jsx('div', {
+              className: 'flex flex-1 items-center justify-center text-xs',
+              style: { color: 'var(--ui-text-quaternary)' },
+              children: '本周还没有按模型拆开的 Token'
+            })
+      ]
+    })
+  })
+}
+
 function useSummary(interval = 30000) {
   const focusedSessionId = useHostState('focusedSessionId')
   const activeSessionId = useHostState('activeSessionId')
@@ -706,7 +795,7 @@ function UsageCenterPage() {
     children: jsxs('div', {
       className: 'mx-auto grid h-full min-h-0 max-w-[1600px] gap-2.5 p-3',
       style: {
-        gridTemplateRows: 'auto auto minmax(180px, 1.1fr) minmax(132px, 0.72fr) minmax(140px, 0.78fr) auto'
+        gridTemplateRows: 'auto auto minmax(160px, 1fr) minmax(148px, 0.82fr) minmax(132px, 0.72fr) minmax(120px, 0.7fr) auto'
       },
       children: [
         jsxs('header', {
@@ -758,6 +847,10 @@ function UsageCenterPage() {
         }),
         jsx(PeriodRibbon, { periods, rolling }),
         jsx(DailyTrend, { rows: usage.daily, summary: rolling['30d'] }),
+        jsx(ModelCyclePanel, {
+          periodsMap: usage.by_model_periods,
+          activeModel: data.current_session?.model || model
+        }),
         jsxs('div', {
           className: 'grid min-h-0 gap-2.5',
           style: { gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' },
@@ -789,9 +882,8 @@ function UsageCenterPage() {
         }),
         jsxs('div', {
           className: 'grid min-h-0 gap-2.5',
-          style: { gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' },
+          style: { gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' },
           children: [
-            jsx(DistributionPanel, { rows: usage.by_model, title: '模型占比' }),
             jsx(DistributionPanel, { rows: usage.by_provider, title: 'Provider占比' }),
             jsx(DistributionPanel, { rows: usage.by_source, title: '平台占比' })
           ]
@@ -886,7 +978,24 @@ function TodayChip({ value }) {
   })
 }
 
-function HoverChip({ ariaLabel, card, children, startOpen = false }) {
+function WeekChip({ value }) {
+  const tokens = totalTokens(value)
+  return jsxs('span', {
+    className: 'inline-flex h-full min-w-0 items-center gap-1',
+    children: [
+      jsx('span', {
+        className: 'shrink-0 text-(--ui-text-quaternary)',
+        children: '本周'
+      }),
+      jsx('span', {
+        className: 'shrink-0 font-medium tabular-nums text-(--ui-text-secondary)',
+        children: fmtCount(tokens)
+      })
+    ]
+  })
+}
+
+function HoverChip({ ariaLabel, card, children, startOpen = false, wide = false }) {
   const [open, setOpen] = useState(startOpen)
   const show = event => {
     event.preventDefault()
@@ -922,7 +1031,10 @@ function HoverChip({ ariaLabel, card, children, startOpen = false }) {
         sideOffset: 8,
         onMouseEnter: show,
         onMouseLeave: hide,
-        className: 'w-[22rem] p-3 shadow-lg backdrop-blur-none [--popover-surface:var(--ui-bg-elevated)]',
+        className: cn(
+          'p-3 shadow-lg backdrop-blur-none [--popover-surface:var(--ui-bg-elevated)]',
+          wide ? 'w-[26rem]' : 'w-[22rem]'
+        ),
         style: {
           background: 'var(--ui-bg-elevated)',
           color: 'var(--ui-text-primary)',
@@ -976,6 +1088,48 @@ function TodayHoverCard({ value }) {
           jsx('span', { className: 'tabular-nums', children: fmtInteger(item.api_calls) })
         ]
       })
+    ]
+  })
+}
+
+function CycleHoverCard({ weekValue, periodsMap, activeModel }) {
+  const rows = modelCycleRows(periodsMap)
+  return jsxs('div', {
+    className: 'flex w-full flex-col gap-2 text-[0.75rem] leading-snug text-(--ui-text-primary)',
+    children: [
+      jsxs('div', {
+        className: 'flex items-baseline justify-between gap-3',
+        children: [
+          jsx('span', { className: 'font-medium', children: '本周 Token' }),
+          jsx('span', { className: 'font-semibold tabular-nums', children: fmtInteger(totalTokens(weekValue)) })
+        ]
+      }),
+      jsx('div', {
+        className: 'text-[0.625rem] text-(--ui-text-quaternary)',
+        children: '自然周 · 全部模型 · 不含官方额度百分比'
+      }),
+      rows.length
+        ? rows.map(row =>
+            jsxs('div', {
+              className: 'flex items-baseline justify-between gap-3',
+              children: [
+                jsx('span', {
+                  className: 'min-w-0 truncate',
+                  style: {
+                    color: activeModel && row.name === activeModel
+                      ? 'var(--ui-text-primary)'
+                      : 'var(--ui-text-quaternary)'
+                  },
+                  children: row.name
+                }),
+                jsx('span', { className: 'shrink-0 tabular-nums', children: fmtInteger(row.weekTokens) })
+              ]
+            }, row.name)
+          )
+        : jsx('div', {
+            className: 'text-(--ui-text-quaternary)',
+            children: '本周还没有按模型拆开的 Token'
+          })
     ]
   })
 }
@@ -1168,8 +1322,11 @@ function UsageStatus() {
   const summary = useSummary(60000)
   const providers = summary.data?.providers || {}
   const todayValue = summary.data?.usage?.periods?.today
+  const weekValue = summary.data?.usage?.periods?.week
   const providerPeriods = summary.data?.usage?.by_provider_periods || {}
+  const modelPeriods = summary.data?.usage?.by_model_periods || {}
   const periodsReady = Object.prototype.hasOwnProperty.call(summary.data?.usage || {}, 'by_provider_periods')
+  const runtimeModel = summary.data?.current_session?.model
   const items = [
     { name: 'Grok', data: providers['xai-oauth'] },
     { name: 'Codex', data: providers['openai-codex'] },
@@ -1195,6 +1352,21 @@ function UsageStatus() {
         card: jsx(TodayHoverCard, { value: todayValue }),
         children: jsx(TodayChip, { value: todayValue })
       }),
+      jsx('span', {
+        className: 'h-3 w-px shrink-0',
+        style: { background: 'var(--ui-stroke-secondary)' },
+        'aria-hidden': true
+      }, 'sep-week'),
+      jsx(HoverChip, {
+        ariaLabel: `本周 ${fmtInteger(totalTokens(weekValue))} Token`,
+        wide: true,
+        card: jsx(CycleHoverCard, {
+          weekValue,
+          periodsMap: modelPeriods,
+          activeModel: runtimeModel
+        }),
+        children: jsx(WeekChip, { value: weekValue })
+      }),
       ...items.flatMap(item => [
         jsx('span', {
           className: 'h-3 w-px shrink-0',
@@ -1219,7 +1391,7 @@ export default {
   defaultEnabled: true,
   register(ctx) {
     pluginContext = ctx
-    ctx.storage.set('loaded-version', '1.8.0')
+    ctx.storage.set('loaded-version', '1.9.0')
     ctx.registerMany([
       {
         id: 'page',
