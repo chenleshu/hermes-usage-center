@@ -3,7 +3,7 @@
   "label": "Hermes Usage Center",
   "description": "本地聚合 Hermes Token，并显示 Grok、Codex、Claude 官方额度。侧栏整页 + 右下角状态条。",
   "icon": "ChartNoAxesCombined",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "tab": {
     "path": "/usage-center",
     "hidden": true

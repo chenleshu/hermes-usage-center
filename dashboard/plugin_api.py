@@ -219,6 +219,34 @@ def _period_starts(now: datetime) -> dict[str, datetime]:
     }
 
 
+PROVIDER_ALIASES = {
+    "xai-oauth": "xai-oauth",
+    "xai": "xai-oauth",
+    "grok": "xai-oauth",
+    "openai-codex": "openai-codex",
+    "openai": "openai-codex",
+    "codex": "openai-codex",
+    "anthropic": "anthropic",
+    "claude": "anthropic",
+}
+
+
+def canonical_provider(provider: str | None, model: str | None = None) -> str:
+    key = str(provider or "").strip().lower()
+    if key in PROVIDER_ALIASES:
+        return PROVIDER_ALIASES[key]
+    if key and key not in {"auto", "unknown"}:
+        return key
+    model_l = str(model or "").strip().lower()
+    if model_l.startswith("grok") or "grok" in model_l:
+        return "xai-oauth"
+    if model_l.startswith("gpt") or "codex" in model_l:
+        return "openai-codex"
+    if any(token in model_l for token in ("claude", "sonnet", "opus", "haiku")):
+        return "anthropic"
+    return key or "unknown"
+
+
 def parse_reset_at(value: Any, tz: ZoneInfo) -> datetime | None:
     if value is None or value == "":
         return None
@@ -234,14 +262,25 @@ def parse_reset_at(value: Any, tz: ZoneInfo) -> datetime | None:
     return parsed.astimezone(tz)
 
 
-def infer_cycle_start(reset_at: datetime | None, now: datetime) -> tuple[datetime | None, str]:
-    """Infer the open quota window from an official reset time.
+def infer_cycle_start(
+    reset_at: datetime | None,
+    now: datetime,
+    label: str | None = None,
+) -> tuple[datetime | None, str]:
+    """Infer the open quota window from official reset time and label.
 
-    Official APIs give remaining percent and reset, not token caps. Cycle
-    token totals are therefore local usage since this inferred start.
+    Remaining hours alone is not enough: a weekly window with 3 hours left
+    is still a 7-day cycle, not a 5-hour one.
     """
     if reset_at is None:
         return None, "unknown"
+    text = str(label or "").lower()
+    if any(token in text for token in ("5小时", "5-hour", "5 hour", "5h")):
+        return reset_at - timedelta(hours=5), "5h"
+    if any(token in text for token in ("周", "week")):
+        return reset_at - timedelta(days=7), "7d"
+    if any(token in text for token in ("月", "month")):
+        return reset_at - timedelta(days=30), "30d"
     hours = (reset_at - now).total_seconds() / 3600
     if hours <= 0:
         return now, "due"
@@ -276,7 +315,7 @@ def provider_cycle_window(data: dict[str, Any] | None, now: datetime) -> dict[st
         usable,
         key=lambda item: 1000 if item[2] is None else float(item[2]),
     )
-    start, kind = infer_cycle_start(reset, now)
+    start, kind = infer_cycle_start(reset, now, window.get("label"))
     if start is None:
         return None
     return {
@@ -374,7 +413,7 @@ def aggregate_reset_cycles(
 
     for row in rows:
         started = datetime.fromtimestamp(float(row["started_at"]), tz=tz)
-        provider = str(row["billing_provider"] or "unknown")
+        provider = canonical_provider(row["billing_provider"], row["model"])
         model = str(row["model"] or "unknown")
         window = provider_windows.get(provider)
         if window:
@@ -955,6 +994,14 @@ def build_summary(
         cycles = {"by_provider": {}, "by_model": {}}
     for key, payload in provider_payloads.items():
         cycle = cycles["by_provider"].get(key)
+        if cycle is None and key in provider_windows:
+            window = provider_windows[key]
+            cycle = _empty_totals()
+            cycle["kind"] = window["kind"]
+            cycle["start"] = window["start"].isoformat()
+            cycle["reset_at"] = window["reset_at"].isoformat() if window.get("reset_at") else None
+            cycle["label"] = window.get("label") or "额度"
+            cycle["source"] = "local_since_reset"
         if cycle:
             payload["cycle"] = cycle
     usage["cycle_by_model"] = cycles.get("by_model") or {}

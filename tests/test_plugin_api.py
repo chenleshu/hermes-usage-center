@@ -438,6 +438,22 @@ class ResetCycleTests(unittest.TestCase):
         self.assertEqual(result["by_model"]["grok-4.6"]["input_tokens"], 400)
         self.assertEqual(result["by_provider"]["xai-oauth"]["kind"], "7d")
 
+    def test_weekly_label_near_reset_stays_seven_days(self):
+        api = load_plugin_api()
+        tz = ZoneInfo("Asia/Shanghai")
+        now = datetime(2026, 8, 14, 12, 0, tzinfo=tz)
+        reset = datetime(2026, 8, 14, 16, 58, tzinfo=tz)
+        start, kind = api.infer_cycle_start(reset, now, "周额度")
+        self.assertEqual(kind, "7d")
+        self.assertEqual(start, reset - timedelta(days=7))
+
+    def test_explicit_third_party_provider_is_kept(self):
+        api = load_plugin_api()
+        self.assertEqual(api.canonical_provider("openrouter", "gpt-5.6-sol"), "openrouter")
+        self.assertEqual(api.canonical_provider("auto", "grok-4.6"), "xai-oauth")
+        self.assertEqual(api.canonical_provider("auto", "gpt-5.6-sol"), "openai-codex")
+        self.assertEqual(api.canonical_provider("", "claude-opus-4-6"), "anthropic")
+
 
 if __name__ == "__main__":
     unittest.main()
