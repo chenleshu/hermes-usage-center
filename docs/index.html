@@ -11,14 +11,14 @@
     header, main, footer { max-width: 980px; margin: 0 auto; padding: 0 24px; }
     header { padding-top: 56px; padding-bottom: 28px; }
     h1 { font-size: 36px; font-weight: 600; letter-spacing: .02em; }
-    .lead { color: var(--mute); margin-top: 10px; max-width: 52ch; }
+    .lead { color: var(--mute); margin-top: 10px; max-width: 58ch; }
     .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px; }
     a.btn { display: inline-block; padding: 9px 14px; border: 1px solid var(--line); color: var(--ink); text-decoration: none; font-size: 14px; }
     a.btn.pri { background: var(--acc); color: #1b160b; border-color: var(--acc); }
     section { padding: 28px 0; border-top: 1px solid var(--line); }
     h2 { font-size: 18px; font-weight: 500; margin-bottom: 12px; }
     img { width: 100%; border: 1px solid var(--line); background: #111; }
-    .bar { max-width: 640px; }
+    .bar { max-width: 720px; }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     td, th { text-align: left; padding: 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
     th { color: var(--mute); font-weight: 400; width: 28%; }
@@ -29,7 +29,7 @@
 <body>
   <header>
     <h1>Hermes Usage Center</h1>
-    <p class="lead">Hermes Desktop 的模型用量插件。侧栏看日 / 周 / 月和官方额度，右下角常驻今日 Token 与 Grok / Codex / Claude 剩余。</p>
+    <p class="lead">Hermes Desktop 的模型用量插件。侧栏看自然周期和官方额度；右下角常驻今日 Token，以及 Grok / Codex / Claude 的剩余% 与本周期已用。</p>
     <div class="row">
       <a class="btn pri" href="https://github.com/chenleshu/hermes-usage-center">GitHub</a>
       <a class="btn" href="https://github.com/chenleshu/hermes-usage-center#安装">安装说明</a>
@@ -38,22 +38,28 @@
   <main>
     <section>
       <h2>整页看板</h2>
-      <img src="assets/dashboard.png" alt="Hermes Usage Center 看板：今日本周本月、30日趋势、三家官方额度" />
+      <img src="assets/dashboard.png" alt="Hermes Usage Center 看板：自然周期、本周期表、三家官方额度、显示设置" />
     </section>
     <section>
       <h2>右下角状态条</h2>
-      <img class="bar" src="assets/statusbar.png" alt="状态条：今日 Token、Grok、Codex、Claude" />
-      <p class="lead" style="margin-top:12px">悬停某一家，只弹出这一家的额度环和日 / 周 / 月，不掺另外两家，也不显示上下文或会话。</p>
+      <img class="bar" src="assets/statusbar.png" alt="状态条：今日、Grok/Codex/Claude 剩余% 与本周期已用" />
+      <p class="lead" style="margin-top:12px">本周期 Token 贴在剩余%旁边，口径是官方重置窗内已用，不是自然周。悬停某一家只看这一家。</p>
     </section>
     <section>
       <h2>官方额度</h2>
       <img src="assets/quotas.png" alt="Codex、Grok、Claude 额度环" />
     </section>
     <section>
+      <h2>显示设置</h2>
+      <img src="assets/settings.png" alt="显示设置：状态条、模型、单位自动或手动" />
+      <p class="lead" style="margin-top:12px">单位可选自动 / 手动，单位制万/亿或 K/M/B。改完立刻作用于本页和右下角。</p>
+    </section>
+    <section>
       <h2>口径</h2>
       <table>
         <tr><th>今日 / 本周 / 本月</th><td>上海时区自然周期，按会话开始时间归属</td></tr>
         <tr><th>近 7 / 30 / 90 天</th><td>滚动窗口，标签不会写成「本月」</td></tr>
+        <tr><th>本周期 Token</th><td>官方重置窗内已用；无官方窗的模型不进这张表</td></tr>
         <tr><th>官方额度</th><td>账户接口或本机额度快照；不用本地 Token 反推会员余量</td></tr>
       </table>
     </section>
@@ -61,7 +67,7 @@
       <h2>安装</h2>
       <pre>hermes plugins install chenleshu/hermes-usage-center
 hermes plugins enable usage-center</pre>
-      <p class="lead" style="margin-top:12px">Desktop Settings → Plugins 打开本插件。需要 Hermes ≥ 0.20.4。</p>
+      <p class="lead" style="margin-top:12px">Desktop Settings → Plugins 打开本插件。需要 Hermes ≥ 0.20.4。当前版本 v1.11.0。</p>
     </section>
   </main>
   <footer>MIT © 2026 Chen Leshu · 不是 Nous Research 官方插件</footer>
