@@ -1,0 +1,12 @@
+name: usage-center
+version: 1.8.0
+description: "Hermes Usage Center — local token stats plus official Grok, Codex, and Claude quota in the desktop sidebar and status bar."
+author: "Chen Leshu"
+license: MIT
+homepage: "https://github.com/chenleshu/hermes-usage-center"
+tags:
+  - usage
+  - tokens
+  - quota
+  - desktop
+  - observability

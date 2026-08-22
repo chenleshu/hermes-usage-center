@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hermes Usage Center</title>
+  <style>
+    :root { --bg:#0e1013; --ink:#ece8df; --mute:#8b877c; --line:#26282d; --acc:#c9a35a; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--ink); font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; line-height: 1.6; }
+    header, main, footer { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+    header { padding-top: 56px; padding-bottom: 28px; }
+    h1 { font-size: 36px; font-weight: 600; letter-spacing: .02em; }
+    .lead { color: var(--mute); margin-top: 10px; max-width: 52ch; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px; }
+    a.btn { display: inline-block; padding: 9px 14px; border: 1px solid var(--line); color: var(--ink); text-decoration: none; font-size: 14px; }
+    a.btn.pri { background: var(--acc); color: #1b160b; border-color: var(--acc); }
+    section { padding: 28px 0; border-top: 1px solid var(--line); }
+    h2 { font-size: 18px; font-weight: 500; margin-bottom: 12px; }
+    img { width: 100%; border: 1px solid var(--line); background: #111; }
+    .bar { max-width: 640px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    td, th { text-align: left; padding: 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--mute); font-weight: 400; width: 28%; }
+    pre { background: #16181c; padding: 14px 16px; overflow: auto; font-size: 13px; }
+    footer { color: var(--mute); font-size: 12px; padding: 28px 24px 48px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Hermes Usage Center</h1>
+    <p class="lead">Hermes Desktop 的模型用量插件。侧栏看日 / 周 / 月和官方额度，右下角常驻今日 Token 与 Grok / Codex / Claude 剩余。</p>
+    <div class="row">
+      <a class="btn pri" href="https://github.com/OWNER/hermes-usage-center">GitHub</a>
+      <a class="btn" href="https://github.com/OWNER/hermes-usage-center#安装">安装说明</a>
+    </div>
+  </header>
+  <main>
+    <section>
+      <h2>整页看板</h2>
+      <img src="assets/dashboard.png" alt="Hermes Usage Center 看板：今日本周本月、30日趋势、三家官方额度" />
+    </section>
+    <section>
+      <h2>右下角状态条</h2>
+      <img class="bar" src="assets/statusbar.png" alt="状态条：今日 Token、Grok、Codex、Claude" />
+      <p class="lead" style="margin-top:12px">悬停某一家，只弹出这一家的额度环和日 / 周 / 月，不掺另外两家，也不显示上下文或会话。</p>
+    </section>
+    <section>
+      <h2>官方额度</h2>
+      <img src="assets/quotas.png" alt="Codex、Grok、Claude 额度环" />
+    </section>
+    <section>
+      <h2>口径</h2>
+      <table>
+        <tr><th>今日 / 本周 / 本月</th><td>上海时区自然周期，按会话开始时间归属</td></tr>
+        <tr><th>近 7 / 30 / 90 天</th><td>滚动窗口，标签不会写成「本月」</td></tr>
+        <tr><th>官方额度</th><td>账户接口或本机额度快照；不用本地 Token 反推会员余量</td></tr>
+      </table>
+    </section>
+    <section>
+      <h2>安装</h2>
+      <pre>hermes plugins install OWNER/hermes-usage-center
+hermes plugins enable usage-center</pre>
+      <p class="lead" style="margin-top:12px">Desktop Settings → Plugins 打开本插件。需要 Hermes ≥ 0.20.4。</p>
+    </section>
+  </main>
+  <footer>MIT © 2026 Chen Leshu · 不是 Nous Research 官方插件</footer>
+</body>
+</html>
