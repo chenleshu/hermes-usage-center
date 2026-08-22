@@ -58,11 +58,14 @@ tests/test_plugin_api.py
 
 ## 能不能上 Hermes 官方商店
 
-目前没有官方应用商店。大家能装到的路径是：
+官方索引仓 [NousResearch/hermes-plugin-index](https://github.com/NousResearch/hermes-plugin-index) **还没建**（`index.json` 404，见 [hermes-agent#87565](https://github.com/NousResearch/hermes-agent/issues/87565)）。默认 `hermes plugins search` 因此只能扫到随 CLI 打包的 seed。
 
-1. 公开 GitHub 仓 + `hermes plugins install owner/repo`（现在就能用）
-2. 向 [NousResearch/hermes-plugin-index](https://github.com/NousResearch/hermes-plugin-index) 提 PR，进 `hermes plugins search`
-3. 在 Nous Discord `#plugins-skills-and-skins` 发帖。核心仓一般不收第三方产品插件。
+现在能装的路径：
+
+1. 公开仓（立刻能用）：`hermes plugins install chenleshu/hermes-usage-center`
+2. 现行社区索引：[Revell-ai/hermes-plugin-index#4](https://github.com/Revell-ai/hermes-plugin-index/pull/4)（合并后可用 `hermes plugins install usage-center`，前提是把 `plugins.index_url` 指到这个仓，或官方仓建好后接手）
+3. GitHub Release：[`v1.10.0`](https://github.com/chenleshu/hermes-usage-center/releases/tag/v1.10.0)，pin `255f9c80e7df34b99dcc1fe0a57ddfcb19f5030e`
+4. 在 Nous Discord `#plugins-skills-and-skins` 发帖。核心仓一般不收第三方产品插件。
 
 索引收录只审元数据，**不等于代码审计**。
 
