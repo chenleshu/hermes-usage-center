@@ -5,7 +5,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -372,6 +372,71 @@ class ProfileRoutingTests(unittest.TestCase):
                 api.resolve_profile_home("missing")
 
         self.assertEqual(raised.exception.status_code, 404)
+
+
+class ResetCycleTests(unittest.TestCase):
+    def test_infer_cycle_start_uses_seven_days_for_weekly_reset(self):
+        api = load_plugin_api()
+        tz = ZoneInfo("Asia/Shanghai")
+        now = datetime(2026, 8, 8, 12, 0, tzinfo=tz)
+        reset = datetime(2026, 8, 14, 16, 58, tzinfo=tz)
+        start, kind = api.infer_cycle_start(reset, now)
+        self.assertEqual(kind, "7d")
+        self.assertEqual(start, reset - timedelta(days=7))
+
+    def test_infer_cycle_start_uses_five_hours_for_short_window(self):
+        api = load_plugin_api()
+        tz = ZoneInfo("Asia/Shanghai")
+        now = datetime(2026, 8, 8, 12, 0, tzinfo=tz)
+        reset = datetime(2026, 8, 8, 15, 12, tzinfo=tz)
+        start, kind = api.infer_cycle_start(reset, now)
+        self.assertEqual(kind, "5h")
+        self.assertEqual(start, reset - timedelta(hours=5))
+
+    def test_reset_cycle_counts_only_rows_inside_the_window(self):
+        api = load_plugin_api()
+        tz = ZoneInfo("Asia/Shanghai")
+        now = datetime(2026, 8, 8, 12, 0, tzinfo=tz)
+        reset = datetime(2026, 8, 14, 16, 58, tzinfo=tz)
+        start = reset - timedelta(days=7)
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "state.db"
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                """
+                CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY, source TEXT, model TEXT, started_at REAL,
+                    input_tokens INTEGER, output_tokens INTEGER,
+                    cache_read_tokens INTEGER, cache_write_tokens INTEGER,
+                    reasoning_tokens INTEGER, estimated_cost_usd REAL,
+                    actual_cost_usd REAL, cost_status TEXT,
+                    api_call_count INTEGER, billing_provider TEXT
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("old", "desktop", "grok-4.6", (start - timedelta(hours=2)).timestamp(),
+                 9000, 0, 0, 0, 0, 0.0, 0.0, "unavailable", 1, "xai-oauth"),
+            )
+            conn.execute(
+                "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("new", "desktop", "grok-4.6", (start + timedelta(hours=2)).timestamp(),
+                 400, 20, 0, 0, 0, 0.0, 0.0, "unavailable", 1, "xai-oauth"),
+            )
+            conn.commit()
+            conn.close()
+            result = api.aggregate_reset_cycles(
+                db_path,
+                {"xai-oauth": {"start": start, "kind": "7d", "reset_at": reset, "label": "周额度"}},
+                now=now,
+                tz=tz,
+                fallback_start=start,
+            )
+
+        self.assertEqual(result["by_provider"]["xai-oauth"]["input_tokens"], 400)
+        self.assertEqual(result["by_model"]["grok-4.6"]["input_tokens"], 400)
+        self.assertEqual(result["by_provider"]["xai-oauth"]["kind"], "7d")
 
 
 if __name__ == "__main__":

@@ -30,6 +30,56 @@ function useHostState(name) {
 
 let pluginContext = null
 
+const DISPLAY_KEY = 'display-prefs'
+const DISPLAY_DEFAULT = {
+  showToday: true,
+  showWeek: true,
+  showGrok: true,
+  showCodex: true,
+  showClaude: true,
+  colToday: true,
+  colWeek: true,
+  colMonth: true,
+  models: null,
+  unitMode: 'auto',
+  unitSystem: 'cn',
+  unit: 'wan'
+}
+
+function readDisplayPrefs() {
+  const raw = pluginContext?.storage?.get(DISPLAY_KEY)
+  if (!raw || typeof raw !== 'object') return { ...DISPLAY_DEFAULT }
+  return { ...DISPLAY_DEFAULT, ...raw }
+}
+
+function useDisplayPrefs() {
+  const [prefs, setPrefs] = useState(readDisplayPrefs)
+  const save = next => {
+    pluginContext?.storage?.set(DISPLAY_KEY, next)
+    setPrefs(next)
+  }
+  return [prefs, save]
+}
+
+function modelAllowed(name, prefs) {
+  if (!prefs?.models || !prefs.models.length) return true
+  return prefs.models.includes(name)
+}
+
+function Check({ checked, onChange, children }) {
+  return jsxs('label', {
+    className: 'inline-flex cursor-pointer items-center gap-1 text-[0.625rem]',
+    children: [
+      jsx('input', {
+        type: 'checkbox',
+        checked: Boolean(checked),
+        onChange: event => onChange(event.target.checked)
+      }),
+      children
+    ]
+  })
+}
+
 const compact = new Intl.NumberFormat('zh-CN', {
   notation: 'compact',
   maximumFractionDigits: 1
@@ -48,17 +98,33 @@ function fmtTokens(value) {
   return compact.format(Number(value || 0))
 }
 
-function fmtCount(value) {
+function fmtCount(value, prefs) {
   const n = Number(value || 0)
   if (!Number.isFinite(n) || n <= 0) return '0'
-  if (n >= 100_000_000) {
-    const yi = n / 100_000_000
-    return `${yi >= 10 ? yi.toFixed(0) : yi.toFixed(1).replace(/\.0$/, '')}亿`
+  const options = prefs || readDisplayPrefs()
+  const system = options.unitSystem === 'si' ? 'si' : 'cn'
+  const scaled = (divisor, suffix) => {
+    const value = n / divisor
+    const digits = Math.abs(value) >= 100 ? 0 : 1
+    return String(value.toFixed(digits)).replace(/\.0$/, '') + suffix
   }
-  if (n >= 10_000) {
-    const wan = n / 10_000
-    return `${wan >= 100 ? wan.toFixed(0) : wan.toFixed(1).replace(/\.0$/, '')}万`
+  if (options.unitMode === 'manual') {
+    if (system === 'si') {
+      if (options.unit === 'b') return scaled(1_000_000_000, 'B')
+      if (options.unit === 'm') return scaled(1_000_000, 'M')
+      return scaled(1_000, 'K')
+    }
+    if (options.unit === 'yi') return scaled(100_000_000, '亿')
+    return scaled(10_000, '万')
   }
+  if (system === 'si') {
+    if (n >= 1_000_000_000) return scaled(1_000_000_000, 'B')
+    if (n >= 1_000_000) return scaled(1_000_000, 'M')
+    if (n >= 1_000) return scaled(1_000, 'K')
+    return integer.format(Math.round(n))
+  }
+  if (n >= 100_000_000) return scaled(100_000_000, '亿')
+  if (n >= 10_000) return scaled(10_000, '万')
   return integer.format(Math.round(n))
 }
 
@@ -132,12 +198,14 @@ function fmtResetCompact(resetAt) {
 }
 
 function quotaSnapshot(name, data) {
+  const cycleTokens = totalTokens(data?.cycle)
+  const cycleKind = data?.cycle?.kind || ''
   if (!data || data.status === 'unavailable') {
-    return { name, known: false, remaining: null, resetAt: null, label: '', hours: null, compact: '', title: `${name} 不可查询` }
+    return { name, known: false, remaining: null, resetAt: null, label: '', hours: null, compact: '', cycleTokens, cycleKind, title: `${name} 不可查询` }
   }
   const window = bindingWindow(data)
   if (!window) {
-    return { name, known: false, remaining: null, resetAt: null, label: '', hours: null, compact: '', title: `${name} 不可查询` }
+    return { name, known: false, remaining: null, resetAt: null, label: '', hours: null, compact: '', cycleTokens, cycleKind, title: `${name} 不可查询` }
   }
   const remaining = Number(window.remaining_percent)
   const known = !Number.isNaN(remaining)
@@ -153,7 +221,9 @@ function quotaSnapshot(name, data) {
     label,
     hours,
     compact,
-    title: `${name} ${known ? fmtPercent(remaining) : '—'} · ${label} · ${hourText} · ${fmtTime(window.reset_at)}`
+    cycleTokens,
+    cycleKind,
+    title: `${name} ${known ? fmtPercent(remaining) : '—'} · 本周期 ${fmtInteger(cycleTokens)} · ${label} · ${hourText} · ${fmtTime(window.reset_at)}`
   }
 }
 
@@ -659,8 +729,14 @@ function DistributionPanel({ rows, title }) {
   })
 }
 
-function ModelCyclePanel({ periodsMap, activeModel }) {
-  const rows = modelCycleRows(periodsMap)
+function ModelCyclePanel({ periodsMap, activeModel, prefs = DISPLAY_DEFAULT }) {
+  const rows = modelCycleRows(periodsMap).filter(row => modelAllowed(row.name, prefs))
+  const cols = [
+    prefs.colToday !== false && { key: 'today', label: '今日', value: row => totalTokens(row.today) },
+    prefs.colWeek !== false && { key: 'week', label: '本周', value: row => row.weekTokens },
+    prefs.colMonth !== false && { key: 'month', label: '本月', value: row => totalTokens(row.month) }
+  ].filter(Boolean)
+  const template = `minmax(0, 1.6fr) repeat(${Math.max(1, cols.length)}, minmax(4.5rem, 1fr))`
   return jsx(Panel, {
     className: 'flex h-full min-h-0 flex-col px-2.5 py-2',
     children: jsxs('div', {
@@ -684,14 +760,12 @@ function ModelCyclePanel({ periodsMap, activeModel }) {
                 jsxs('div', {
                   className: 'grid gap-2 pb-1 text-[0.5rem]',
                   style: {
-                    gridTemplateColumns: 'minmax(0, 1.6fr) repeat(3, minmax(4.5rem, 1fr))',
+                    gridTemplateColumns: template,
                     color: 'var(--ui-text-quaternary)'
                   },
                   children: [
                     jsx('span', { children: '模型' }),
-                    jsx('span', { className: 'text-right', children: '今日' }),
-                    jsx('span', { className: 'text-right', children: '本周' }),
-                    jsx('span', { className: 'text-right', children: '本月' })
+                    ...cols.map(col => jsx('span', { className: 'text-right', children: col.label }, col.key))
                   ]
                 }),
                 rows.map(row => {
@@ -699,7 +773,7 @@ function ModelCyclePanel({ periodsMap, activeModel }) {
                   return jsxs('div', {
                     className: 'grid items-center gap-2 border-t py-1 text-[0.625rem]',
                     style: {
-                      gridTemplateColumns: 'minmax(0, 1.6fr) repeat(3, minmax(4.5rem, 1fr))',
+                      gridTemplateColumns: template,
                       borderColor: 'var(--ui-stroke-secondary)',
                       color: on ? 'var(--ui-text-primary)' : 'var(--ui-text-secondary)'
                     },
@@ -709,18 +783,10 @@ function ModelCyclePanel({ periodsMap, activeModel }) {
                         className: 'truncate font-medium',
                         children: row.name
                       }),
-                      jsx('span', {
-                        className: 'text-right tabular-nums',
-                        children: fmtCount(totalTokens(row.today))
-                      }),
-                      jsx('span', {
-                        className: 'text-right font-semibold tabular-nums',
-                        children: fmtCount(row.weekTokens)
-                      }),
-                      jsx('span', {
-                        className: 'text-right tabular-nums',
-                        children: fmtCount(totalTokens(row.month))
-                      })
+                      ...cols.map(col => jsx('span', {
+                        className: cn('text-right tabular-nums', col.key === 'week' && 'font-semibold'),
+                        children: fmtCount(col.value(row))
+                      }, col.key))
                     ]
                   }, row.name)
                 })
@@ -731,6 +797,118 @@ function ModelCyclePanel({ periodsMap, activeModel }) {
               style: { color: 'var(--ui-text-quaternary)' },
               children: '本周还没有按模型拆开的 Token'
             })
+      ]
+    })
+  })
+}
+
+function DisplayPrefsPanel({ prefs, onChange, modelNames }) {
+  const names = modelNames.length ? modelNames : []
+  const selected = prefs.models
+  const allOn = !selected || !selected.length
+  const toggleFlag = key => onChange({ ...prefs, [key]: !prefs[key] })
+  const toggleModel = name => {
+    const current = allOn ? names : selected.slice()
+    const next = current.includes(name)
+      ? current.filter(item => item !== name)
+      : current.concat(name)
+    onChange({ ...prefs, models: next.length === names.length ? null : next })
+  }
+  return jsx(Panel, {
+    className: 'px-2.5 py-2',
+    children: jsxs('div', {
+      className: 'flex flex-col gap-2',
+      children: [
+        jsxs('div', {
+          className: 'flex items-baseline justify-between gap-2',
+          children: [
+            jsx('h3', { className: 'text-xs font-semibold', children: '显示设置' }),
+            jsx('span', {
+              className: 'text-[0.5rem]',
+              style: { color: 'var(--ui-text-quaternary)' },
+              children: '只影响本机这一页和右下角，不改统计口径'
+            })
+          ]
+        }),
+        jsxs('div', {
+          className: 'flex flex-wrap gap-x-3 gap-y-1',
+          children: [
+            jsx(Check, { checked: prefs.showToday, onChange: () => toggleFlag('showToday'), children: '状态条·今日' }),
+            jsx(Check, { checked: prefs.showWeek, onChange: () => toggleFlag('showWeek'), children: '状态条·本周' }),
+            jsx(Check, { checked: prefs.showGrok, onChange: () => toggleFlag('showGrok'), children: 'Grok额度' }),
+            jsx(Check, { checked: prefs.showCodex, onChange: () => toggleFlag('showCodex'), children: 'Codex额度' }),
+            jsx(Check, { checked: prefs.showClaude, onChange: () => toggleFlag('showClaude'), children: 'Claude额度' }),
+            jsx(Check, { checked: prefs.colToday, onChange: () => toggleFlag('colToday'), children: '表·今日' }),
+            jsx(Check, { checked: prefs.colWeek, onChange: () => toggleFlag('colWeek'), children: '表·本周' }),
+            jsx(Check, { checked: prefs.colMonth, onChange: () => toggleFlag('colMonth'), children: '表·本月' })
+          ]
+        }),
+        jsxs('div', {
+          className: 'flex flex-wrap gap-x-3 gap-y-1',
+          children: [
+            jsx(Check, {
+              checked: allOn,
+              onChange: checked => onChange({ ...prefs, models: checked ? null : names.slice() }),
+              children: '全部模型'
+            }),
+            ...names.map(name => jsx(Check, {
+              checked: allOn || selected.includes(name),
+              onChange: () => toggleModel(name),
+              children: name
+            }, name))
+          ]
+        }),
+        jsxs('div', {
+          className: 'flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.625rem]',
+          children: [
+            jsx('span', {
+              style: { color: 'var(--ui-text-quaternary)' },
+              children: '单位'
+            }),
+            jsx(Check, {
+              checked: prefs.unitMode !== 'manual',
+              onChange: checked => onChange({ ...prefs, unitMode: checked ? 'auto' : 'manual' }),
+              children: '自动'
+            }),
+            jsx(Check, {
+              checked: prefs.unitSystem !== 'si',
+              onChange: checked => onChange({
+                ...prefs,
+                unitSystem: checked ? 'cn' : 'si',
+                unit: checked ? (prefs.unit === 'yi' ? 'yi' : 'wan') : (prefs.unit === 'b' || prefs.unit === 'm' ? prefs.unit : 'k')
+              }),
+              children: '万/亿'
+            }),
+            jsx(Check, {
+              checked: prefs.unitSystem === 'si',
+              onChange: checked => onChange({
+                ...prefs,
+                unitSystem: checked ? 'si' : 'cn',
+                unit: checked ? (['k', 'm', 'b'].includes(prefs.unit) ? prefs.unit : 'k') : (prefs.unit === 'yi' ? 'yi' : 'wan')
+              }),
+              children: 'K/M/B'
+            }),
+            prefs.unitMode === 'manual' && prefs.unitSystem !== 'si'
+              ? jsxs('span', {
+                  className: 'inline-flex gap-2',
+                  children: [
+                    jsx(Check, { checked: prefs.unit !== 'yi', onChange: () => onChange({ ...prefs, unit: 'wan' }), children: '万' }),
+                    jsx(Check, { checked: prefs.unit === 'yi', onChange: () => onChange({ ...prefs, unit: 'yi' }), children: '亿' })
+                  ]
+                })
+              : null,
+            prefs.unitMode === 'manual' && prefs.unitSystem === 'si'
+              ? jsxs('span', {
+                  className: 'inline-flex gap-2',
+                  children: [
+                    jsx(Check, { checked: prefs.unit === 'k', onChange: () => onChange({ ...prefs, unit: 'k' }), children: 'K' }),
+                    jsx(Check, { checked: prefs.unit === 'm', onChange: () => onChange({ ...prefs, unit: 'm' }), children: 'M' }),
+                    jsx(Check, { checked: prefs.unit === 'b', onChange: () => onChange({ ...prefs, unit: 'b' }), children: 'B' })
+                  ]
+                })
+              : null
+          ]
+        })
       ]
     })
   })
@@ -756,6 +934,7 @@ function useSummary(interval = 30000) {
 }
 
 function UsageCenterPage() {
+  const [prefs, setPrefs] = useDisplayPrefs()
   const model = useHostState('model')
   const profile = useHostState('profile')
   const queryClient = useQueryClient()
@@ -795,7 +974,7 @@ function UsageCenterPage() {
     children: jsxs('div', {
       className: 'mx-auto grid h-full min-h-0 max-w-[1600px] gap-2.5 p-3',
       style: {
-        gridTemplateRows: 'auto auto minmax(160px, 1fr) minmax(148px, 0.82fr) minmax(132px, 0.72fr) minmax(120px, 0.7fr) auto'
+        gridTemplateRows: 'auto auto minmax(140px, 1fr) minmax(132px, 0.78fr) minmax(120px, 0.68fr) minmax(108px, 0.62fr) auto auto'
       },
       children: [
         jsxs('header', {
@@ -849,25 +1028,27 @@ function UsageCenterPage() {
         jsx(DailyTrend, { rows: usage.daily, summary: rolling['30d'] }),
         jsx(ModelCyclePanel, {
           periodsMap: usage.by_model_periods,
-          activeModel: data.current_session?.model || model
+          activeModel: data.current_session?.model || model,
+          prefs
         }),
-        jsxs('div', {
+        [prefs.showCodex, prefs.showGrok, prefs.showClaude].some(Boolean)
+          ? jsxs('div', {
           className: 'grid min-h-0 gap-2.5',
-          style: { gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' },
+          style: { gridTemplateColumns: `repeat(${[prefs.showCodex, prefs.showGrok, prefs.showClaude].filter(Boolean).length}, minmax(0, 1fr))` },
           children: [
-            jsx(ProviderPanel, {
+            prefs.showCodex ? jsx(ProviderPanel, {
               title: 'OpenAI Codex',
               data: providers['openai-codex'],
               refreshing: refresh.isPending && mutating === 'codex',
               onRefresh: () => refresh.mutate('codex')
-            }),
-            jsx(ProviderPanel, {
+            }) : null,
+            prefs.showGrok ? jsx(ProviderPanel, {
               title: 'xAI Grok',
               data: providers['xai-oauth'],
               refreshing: refresh.isPending && mutating === 'xai',
               onRefresh: () => refresh.mutate('xai')
-            }),
-            jsx(ProviderPanel, {
+            }) : null,
+            prefs.showClaude ? jsx(ProviderPanel, {
               title: 'Claude',
               data: providers.anthropic || {
                 status: 'unavailable',
@@ -877,9 +1058,9 @@ function UsageCenterPage() {
               },
               refreshing: refresh.isPending && mutating === 'anthropic',
               onRefresh: () => refresh.mutate('anthropic')
-            })
+            }) : null
           ]
-        }),
+        }) : null,
         jsxs('div', {
           className: 'grid min-h-0 gap-2.5',
           style: { gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' },
@@ -887,6 +1068,11 @@ function UsageCenterPage() {
             jsx(DistributionPanel, { rows: usage.by_provider, title: 'Provider占比' }),
             jsx(DistributionPanel, { rows: usage.by_source, title: '平台占比' })
           ]
+        }),
+        jsx(DisplayPrefsPanel, {
+          prefs,
+          onChange: setPrefs,
+          modelNames: modelCycleRows(usage.by_model_periods).map(row => row.name)
         }),
         jsxs('div', {
           className: 'flex min-w-0 items-center justify-between gap-3 text-[0.5rem]',
@@ -905,7 +1091,7 @@ function UsageCenterPage() {
   })
 }
 
-function StatusQuotaChip({ item }) {
+function StatusQuotaChip({ item, prefs }) {
   const tone = quotaTone(item.known ? item.remaining : null)
   return jsxs('span', {
     className: 'inline-flex h-full min-w-0 items-center gap-1',
@@ -933,6 +1119,12 @@ function StatusQuotaChip({ item }) {
         style: { color: tone },
         children: item.known ? fmtPercent(item.remaining) : '—'
       }),
+      item.cycleTokens
+        ? jsx('span', {
+            className: 'shrink-0 tabular-nums text-(--ui-text-secondary)',
+            children: fmtCount(item.cycleTokens, prefs)
+          })
+        : null,
       item.compact
         ? jsx('span', {
             className: 'shrink-0 tabular-nums text-(--ui-text-quaternary)',
@@ -1092,8 +1284,8 @@ function TodayHoverCard({ value }) {
   })
 }
 
-function CycleHoverCard({ weekValue, periodsMap, activeModel }) {
-  const rows = modelCycleRows(periodsMap)
+function CycleHoverCard({ weekValue, periodsMap, activeModel, prefs = DISPLAY_DEFAULT }) {
+  const rows = modelCycleRows(periodsMap).filter(row => modelAllowed(row.name, prefs))
   return jsxs('div', {
     className: 'flex w-full flex-col gap-2 text-[0.75rem] leading-snug text-(--ui-text-primary)',
     children: [
@@ -1319,6 +1511,7 @@ function ProviderHoverBlock({ name, data, periods }) {
 }
 
 function UsageStatus() {
+  const [prefs] = useDisplayPrefs()
   const summary = useSummary(60000)
   const providers = summary.data?.providers || {}
   const todayValue = summary.data?.usage?.periods?.today
@@ -1377,7 +1570,7 @@ function UsageStatus() {
           ariaLabel: item.snap.title,
           startOpen: false,
           card: jsx(ProviderHoverBlock, { name: item.name, data: item.data, periods: item.periods }),
-          children: jsx(StatusQuotaChip, { item: item.snap })
+          children: jsx(StatusQuotaChip, { item: item.snap, prefs })
         }, item.name)
       ])
     ]
@@ -1391,7 +1584,7 @@ export default {
   defaultEnabled: true,
   register(ctx) {
     pluginContext = ctx
-    ctx.storage.set('loaded-version', '1.9.0')
+    ctx.storage.set('loaded-version', '1.10.0')
     ctx.registerMany([
       {
         id: 'page',

@@ -219,6 +219,180 @@ def _period_starts(now: datetime) -> dict[str, datetime]:
     }
 
 
+def parse_reset_at(value: Any, tz: ZoneInfo) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=tz)
+    return parsed.astimezone(tz)
+
+
+def infer_cycle_start(reset_at: datetime | None, now: datetime) -> tuple[datetime | None, str]:
+    """Infer the open quota window from an official reset time.
+
+    Official APIs give remaining percent and reset, not token caps. Cycle
+    token totals are therefore local usage since this inferred start.
+    """
+    if reset_at is None:
+        return None, "unknown"
+    hours = (reset_at - now).total_seconds() / 3600
+    if hours <= 0:
+        return now, "due"
+    if hours <= 8:
+        return reset_at - timedelta(hours=5), "5h"
+    if hours <= 8 * 24:
+        return reset_at - timedelta(days=7), "7d"
+    return reset_at - timedelta(days=30), "30d"
+
+
+def provider_cycle_window(data: dict[str, Any] | None, now: datetime) -> dict[str, Any] | None:
+    if not data:
+        return None
+    tz = now.tzinfo or LOCAL_TZ
+    candidates = list(data.get("windows") or [])
+    if not candidates and data.get("reset_at"):
+        candidates = [{
+            "reset_at": data.get("reset_at"),
+            "remaining_percent": data.get("remaining_percent"),
+            "label": data.get("label") or "额度",
+        }]
+    usable = []
+    for window in candidates:
+        reset = parse_reset_at(window.get("reset_at"), tz)
+        if reset is None:
+            continue
+        remaining = window.get("remaining_percent")
+        usable.append((window, reset, remaining))
+    if not usable:
+        return None
+    window, reset, remaining = min(
+        usable,
+        key=lambda item: 1000 if item[2] is None else float(item[2]),
+    )
+    start, kind = infer_cycle_start(reset, now)
+    if start is None:
+        return None
+    return {
+        "kind": kind,
+        "start": start,
+        "reset_at": reset,
+        "label": window.get("label") or "额度",
+    }
+
+
+def aggregate_reset_cycles(
+    db_path: str | Path,
+    provider_windows: dict[str, dict[str, Any]],
+    *,
+    now: datetime,
+    tz: ZoneInfo,
+    fallback_start: datetime,
+) -> dict[str, Any]:
+    """Sum local tokens since each provider's inferred reset-cycle start."""
+    by_provider: dict[str, dict[str, Any]] = {}
+    by_model: dict[str, dict[str, Any]] = {}
+    earliest = fallback_start
+    for window in provider_windows.values():
+        start = window.get("start")
+        if isinstance(start, datetime) and start < earliest:
+            earliest = start
+
+    conn = sqlite3.connect(f"file:{Path(db_path).as_posix()}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        has_model_usage = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_model_usage'"
+        ).fetchone()
+        if has_model_usage:
+            rows = conn.execute(
+                """
+                SELECT u.session_id AS id, u.model, u.billing_provider, s.started_at,
+                       COALESCE(u.api_call_count, 0) AS api_call_count,
+                       COALESCE(u.input_tokens, 0) AS input_tokens,
+                       COALESCE(u.output_tokens, 0) AS output_tokens,
+                       COALESCE(u.cache_read_tokens, 0) AS cache_read_tokens,
+                       COALESCE(u.cache_write_tokens, 0) AS cache_write_tokens,
+                       COALESCE(u.reasoning_tokens, 0) AS reasoning_tokens,
+                       COALESCE(u.estimated_cost_usd, 0) AS estimated_cost_usd,
+                       COALESCE(u.actual_cost_usd, 0) AS actual_cost_usd
+                  FROM session_model_usage u
+                  JOIN sessions s ON s.id = u.session_id
+                 WHERE s.started_at >= ?
+                UNION ALL
+                SELECT s.id, s.model, s.billing_provider, s.started_at,
+                       COALESCE(s.api_call_count, 0),
+                       COALESCE(s.input_tokens, 0),
+                       COALESCE(s.output_tokens, 0),
+                       COALESCE(s.cache_read_tokens, 0),
+                       COALESCE(s.cache_write_tokens, 0),
+                       COALESCE(s.reasoning_tokens, 0),
+                       COALESCE(s.estimated_cost_usd, 0),
+                       COALESCE(s.actual_cost_usd, 0)
+                  FROM sessions s
+                 WHERE s.started_at >= ?
+                   AND NOT EXISTS (
+                       SELECT 1 FROM session_model_usage u WHERE u.session_id = s.id
+                   )
+                """,
+                (earliest.timestamp(), earliest.timestamp()),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, source, model, started_at, billing_provider,
+                       COALESCE(api_call_count, 0) AS api_call_count,
+                       COALESCE(input_tokens, 0) AS input_tokens,
+                       COALESCE(output_tokens, 0) AS output_tokens,
+                       COALESCE(cache_read_tokens, 0) AS cache_read_tokens,
+                       COALESCE(cache_write_tokens, 0) AS cache_write_tokens,
+                       COALESCE(reasoning_tokens, 0) AS reasoning_tokens,
+                       COALESCE(estimated_cost_usd, 0) AS estimated_cost_usd,
+                       COALESCE(actual_cost_usd, 0) AS actual_cost_usd
+                  FROM sessions
+                 WHERE started_at >= ?
+                """,
+                (earliest.timestamp(),),
+            ).fetchall()
+    finally:
+        conn.close()
+
+    def _bucket(kind: str, start: datetime, reset: datetime | None, label: str) -> dict[str, Any]:
+        total = _empty_totals()
+        total["kind"] = kind
+        total["start"] = start.isoformat()
+        total["reset_at"] = reset.isoformat() if reset else None
+        total["label"] = label
+        total["source"] = "local_since_reset"
+        return total
+
+    for row in rows:
+        started = datetime.fromtimestamp(float(row["started_at"]), tz=tz)
+        provider = str(row["billing_provider"] or "unknown")
+        model = str(row["model"] or "unknown")
+        window = provider_windows.get(provider)
+        if window:
+            start, kind, reset, label = window["start"], window["kind"], window["reset_at"], window.get("label") or "额度"
+        else:
+            start, kind, reset, label = fallback_start, "calendar_week", None, "自然周"
+        if started < start:
+            continue
+        if provider not in by_provider:
+            by_provider[provider] = _bucket(kind, start, reset, label)
+        if model not in by_model:
+            by_model[model] = _bucket(kind, start, reset, label)
+        _add_row(by_provider[provider], row)
+        _add_row(by_model[model], row)
+
+    return {"by_provider": by_provider, "by_model": by_model}
+
+
 def _empty_totals() -> dict[str, Any]:
     return {
         "sessions": 0,
@@ -756,6 +930,36 @@ def build_summary(
     if xai.get("status") in {"stale", "unavailable"}:
         refresh_scheduled = schedule_xai_refresh(home)
 
+    codex = get_codex_usage(home)
+    anthropic = get_anthropic_usage(home)
+    provider_payloads = {
+        "openai-codex": codex,
+        "xai-oauth": xai,
+        "anthropic": anthropic,
+    }
+    provider_windows = {}
+    for key, payload in provider_payloads.items():
+        window = provider_cycle_window(payload, generated_at)
+        if window:
+            provider_windows[key] = window
+    week_start = _period_starts(generated_at)["week"]
+    try:
+        cycles = aggregate_reset_cycles(
+            home / "state.db",
+            provider_windows,
+            now=generated_at,
+            tz=LOCAL_TZ,
+            fallback_start=week_start,
+        )
+    except (OSError, sqlite3.Error, ValueError):
+        cycles = {"by_provider": {}, "by_model": {}}
+    for key, payload in provider_payloads.items():
+        cycle = cycles["by_provider"].get(key)
+        if cycle:
+            payload["cycle"] = cycle
+    usage["cycle_by_model"] = cycles.get("by_model") or {}
+    usage["cycle_by_provider"] = cycles.get("by_provider") or {}
+
     return {
         "profile": profile_name,
         "generated_at": generated_at.isoformat(),
@@ -763,11 +967,7 @@ def build_summary(
         "local_usage_status": usage_status,
         "current_session": current_session,
         "usage": usage,
-        "providers": {
-            "openai-codex": get_codex_usage(home),
-            "xai-oauth": xai,
-            "anthropic": get_anthropic_usage(home),
-        },
+        "providers": provider_payloads,
         "refresh": {
             "xai_scheduled": refresh_scheduled,
             "local_seconds": 30,
