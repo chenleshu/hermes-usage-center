@@ -92,6 +92,16 @@ def _profile_scope(home: Path):
         reset_hermes_home_override(token)
 
 
+def grok_quota_windows(used: float, remaining: float, reset_at: str) -> list[dict[str, Any]]:
+    """Grok's official sample is a single weekly window. Always expose it as windows[]."""
+    return [{
+        "label": "周额度",
+        "used_percent": used,
+        "remaining_percent": remaining,
+        "reset_at": reset_at,
+    }]
+
+
 def parse_xai_usage(
     output: str,
     *,
@@ -121,14 +131,16 @@ def parse_xai_usage(
     if reset_at < current:
         reset_at = reset_at.replace(year=current.year + 1)
 
+    remaining = max(0.0, 100.0 - used)
     return {
         "provider": "xai-oauth",
         "status": "available",
         "used_percent": used,
-        "remaining_percent": max(0.0, 100.0 - used),
+        "remaining_percent": remaining,
         "reset_at": reset_at.isoformat(),
         "source": "grok_build_usage",
         "confidence": "official_client",
+        "windows": grok_quota_windows(used, remaining, reset_at.isoformat()),
     }
 
 
@@ -161,6 +173,14 @@ def read_xai_cache(
     result["age_seconds"] = round(age)
     if age > max(1, int(max_age_seconds)):
         result["status"] = "stale"
+    if not result.get("windows"):
+        remaining = result.get("remaining_percent")
+        used = result.get("used_percent")
+        reset_at = result.get("reset_at")
+        if remaining is not None and reset_at:
+            if used is None:
+                used = max(0.0, 100.0 - float(remaining))
+            result["windows"] = grok_quota_windows(float(used), float(remaining), str(reset_at))
     return result
 
 

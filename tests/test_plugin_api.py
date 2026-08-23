@@ -185,6 +185,8 @@ class XaiUsageParsingTests(unittest.TestCase):
         self.assertEqual(result["remaining_percent"], 98)
         self.assertEqual(result["reset_at"], "2026-08-14T16:58:00+08:00")
         self.assertEqual(result["source"], "grok_build_usage")
+        self.assertEqual(result["windows"][0]["remaining_percent"], 98)
+        self.assertEqual(result["windows"][0]["label"], "周额度")
 
     def test_stale_cache_keeps_last_value_but_marks_it_stale(self):
         api = load_plugin_api()
@@ -210,6 +212,35 @@ class XaiUsageParsingTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "stale")
         self.assertEqual(result["remaining_percent"], 98)
+        self.assertEqual(result["windows"][0]["remaining_percent"], 98)
+
+    def test_cache_without_windows_is_normalized_for_the_desktop(self):
+        api = load_plugin_api()
+        tz = ZoneInfo("Asia/Shanghai")
+        now = datetime(2026, 8, 8, 12, 0, tzinfo=tz)
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "xai-usage.json"
+            cache.write_text(
+                json.dumps(
+                    {
+                        "provider": "xai-oauth",
+                        "status": "available",
+                        "used_percent": 6,
+                        "remaining_percent": 94,
+                        "reset_at": "2026-08-28T16:58:00+08:00",
+                        "fetched_at": "2026-08-08T11:59:00+08:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = api.read_xai_cache(cache, now=now, max_age_seconds=900)
+
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(len(result["windows"]), 1)
+        self.assertEqual(result["windows"][0]["remaining_percent"], 94)
+        window = api.provider_cycle_window(result, now)
+        self.assertIsNotNone(window)
+        self.assertEqual(window["kind"], "7d")
 
 
 class AccountUsageSerializationTests(unittest.TestCase):

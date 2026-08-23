@@ -935,17 +935,19 @@ function useSummary(interval = 30000) {
   const activeSessionId = useHostState('activeSessionId')
   const sessionId = focusedSessionId || activeSessionId
   const profile = useHostState('profile')
-  const gateway = useHostState('gateway')
   return useQuery({
     queryKey: ['usage-center', 'summary', profile || 'default', sessionId || 'none'],
     queryFn: () => {
       const suffix = sessionId ? `&session_id=${encodeURIComponent(sessionId)}` : ''
       return pluginContext.rest(`/summary?days=30${suffix}`)
     },
-    refetchInterval: interval,
-    staleTime: 15000,
-    retry: 1,
-    enabled: gateway === 'open'
+    refetchInterval: query => {
+      const grok = query.state.data?.providers?.['xai-oauth']
+      if (!grok || grok.status === 'unavailable') return Math.min(interval, 5000)
+      return interval
+    },
+    staleTime: 5000,
+    retry: 1
   })
 }
 
@@ -976,8 +978,14 @@ function UsageCenterPage() {
       ]
     })
   }
-
   const data = summary.data
+  if (!data) {
+    return jsx('div', {
+      className: 'flex h-full items-center justify-center gap-2 text-xs',
+      style: { color: 'var(--ui-text-tertiary)' },
+      children: [jsx(GlyphSpinner, {}), '正在读取本地用量…']
+    })
+  }
   const usage = data.usage || {}
   const periods = usage.periods || {}
   const rolling = usage.rolling || {}
