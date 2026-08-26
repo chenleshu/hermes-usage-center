@@ -1,9 +1,9 @@
 {
   "name": "usage-center",
   "label": "Hermes Usage Center",
-  "description": "本地聚合 Hermes Token，并显示 Grok、Codex、Claude 官方额度。侧栏整页 + 右下角状态条。",
+  "description": "本地聚合 Hermes Token，显示 Grok / Codex / Claude 官方额度，以及 Just My Socks 已用/剩余流量。",
   "icon": "ChartNoAxesCombined",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "tab": {
     "path": "/usage-center",
     "hidden": true

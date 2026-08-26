@@ -1,6 +1,6 @@
 name: usage-center
-version: 1.11.0
-description: "Hermes Usage Center — local token stats plus official Grok, Codex, and Claude quota in the desktop sidebar and status bar."
+version: 1.12.0
+description: "Hermes Usage Center — local token stats, official quotas, and Just My Socks traffic."
 author: "Chen Leshu"
 license: MIT
 homepage: "https://github.com/chenleshu/hermes-usage-center"

@@ -37,6 +37,7 @@ const DISPLAY_DEFAULT = {
   showGrok: true,
   showCodex: true,
   showClaude: true,
+  showJms: true,
   models: null,
   unitMode: 'auto',
   unitSystem: 'cn',
@@ -871,7 +872,8 @@ function DisplayPrefsPanel({ prefs, onChange, modelNames }) {
             jsx(Check, { checked: prefs.showWeek, onChange: () => toggleFlag('showWeek'), children: '自然周' }),
             jsx(Check, { checked: prefs.showGrok, onChange: () => toggleFlag('showGrok'), children: 'Grok' }),
             jsx(Check, { checked: prefs.showCodex, onChange: () => toggleFlag('showCodex'), children: 'Codex' }),
-            jsx(Check, { checked: prefs.showClaude, onChange: () => toggleFlag('showClaude'), children: 'Claude' })
+            jsx(Check, { checked: prefs.showClaude, onChange: () => toggleFlag('showClaude'), children: 'Claude' }),
+            jsx(Check, { checked: prefs.showJms, onChange: () => toggleFlag('showJms'), children: 'VPN' })
           ]
         }),
         jsxs('div', {
@@ -929,6 +931,528 @@ function DisplayPrefsPanel({ prefs, onChange, modelNames }) {
   })
 }
 
+
+function fmtGB(bytes) {
+  const gb = Number(bytes || 0) / 1_000_000_000
+  if (!Number.isFinite(gb)) return '—'
+  const places = Math.abs(gb) >= 100 ? 1 : 2
+  return `${gb.toFixed(places)} GB`
+}
+
+function fillJmsDaily(rows, count = 30) {
+  const map = new Map((rows || []).map(row => [String(row.date), row]))
+  const result = []
+  const today = new Date()
+  today.setHours(12, 0, 0, 0)
+  for (let offset = count - 1; offset >= 0; offset -= 1) {
+    const date = new Date(today)
+    date.setDate(today.getDate() - offset)
+    const key = dateKey(date)
+    result.push(map.get(key) || { date: key, used_b: 0 })
+  }
+  return result
+}
+
+function useJms(interval = 60000) {
+  return useQuery({
+    queryKey: ['usage-center', 'jms'],
+    queryFn: () => pluginContext.rest('/jms'),
+    refetchInterval: interval,
+    staleTime: 10000,
+    retry: 1
+  })
+}
+
+function JmsConfigForm({ compact = false }) {
+  const queryClient = useQueryClient()
+  const [url, setUrl] = useState('')
+  const save = useMutation({
+    mutationFn: () => pluginContext.rest('/jms/config', { method: 'POST', body: { url } }),
+    onSuccess: () => {
+      setUrl('')
+      queryClient.invalidateQueries({ queryKey: ['usage-center', 'jms'] })
+    }
+  })
+  return jsxs('form', {
+    className: compact ? 'flex min-w-0 flex-col gap-2' : 'flex min-w-0 flex-col gap-3',
+    onSubmit: event => {
+      event.preventDefault()
+      if (url.trim()) save.mutate()
+    },
+    children: [
+      jsx('textarea', {
+        className: 'min-h-16 w-full resize-y rounded-md px-2.5 py-2 text-[0.75rem]',
+        style: {
+          background: 'var(--ui-bg-secondary)',
+          border: '1px solid var(--ui-stroke-secondary)',
+          color: 'var(--ui-text-primary)'
+        },
+        placeholder: '粘贴 getbwcounter / getsub 链接，或 service=…&id=…',
+        value: url,
+        onChange: event => setUrl(event.target.value)
+      }),
+      jsxs('div', {
+        className: 'flex items-center gap-2',
+        children: [
+          jsx(Button, {
+            type: 'submit',
+            size: 'sm',
+            disabled: save.isPending || !url.trim(),
+            children: save.isPending ? '保存中…' : '保存并采样'
+          }),
+          save.isError
+            ? jsx('span', {
+                className: 'text-[0.625rem]',
+                style: { color: 'var(--ui-danger)' },
+                children: save.error?.message || '保存失败'
+              })
+            : null
+        ]
+      })
+    ]
+  })
+}
+
+function JmsStat({ title, value, hint }) {
+  return jsx(Panel, {
+    className: 'px-2.5 py-2',
+    title: hint || title,
+    children: jsxs('div', {
+      className: 'flex h-full min-w-0 flex-col justify-between gap-1.5',
+      children: [
+        jsx('span', {
+          className: 'truncate text-[0.6875rem] font-medium',
+          children: title
+        }),
+        jsx('div', {
+          className: 'truncate text-lg font-semibold leading-none tabular-nums',
+          children: value
+        }),
+        hint
+          ? jsx('div', {
+              className: 'truncate text-[0.5625rem]',
+              style: { color: 'var(--ui-text-quaternary)' },
+              children: hint
+            })
+          : null
+      ]
+    })
+  })
+}
+
+function JmsDailyTrend({ rows }) {
+  const data = fillJmsDaily(rows, 30)
+  const max = Math.max(1, ...data.map(row => Number(row.used_b || 0)))
+  return jsx(Panel, {
+    className: 'flex h-full min-h-0 flex-col px-3 py-2.5',
+    children: jsxs('div', {
+      className: 'flex h-full min-h-0 flex-col',
+      children: [
+        jsxs('div', {
+          className: 'flex items-start justify-between gap-3',
+          children: [
+            jsxs('div', {
+              className: 'min-w-0',
+              children: [
+                jsx('h3', { className: 'text-xs font-semibold', children: '30天流量' }),
+                jsx('div', {
+                  className: 'mt-0.5 text-[0.5625rem]',
+                  style: { color: 'var(--ui-text-quaternary)' },
+                  children: '本地采样差值 · 官方接口只有本周期总量'
+                })
+              ]
+            }),
+            jsx('span', {
+              className: 'text-[0.5625rem] tabular-nums',
+              style: { color: 'var(--ui-text-quaternary)' },
+              children: `峰值 ${fmtGB(max)}`
+            })
+          ]
+        }),
+        jsxs('div', {
+          className: 'mt-2 grid min-h-0 flex-1 gap-x-1',
+          style: {
+            gridTemplateColumns: '3.75rem minmax(0, 1fr)',
+            gridTemplateRows: 'minmax(0, 1fr) 0.625rem'
+          },
+          children: [
+            jsxs('div', {
+              className: 'relative min-h-0 pr-1 text-right text-[0.4375rem] leading-none tabular-nums whitespace-nowrap',
+              style: { color: 'var(--ui-text-quaternary)' },
+              children: [
+                jsx('span', { className: 'absolute right-1 top-0', children: fmtGB(max) }),
+                jsx('span', {
+                  className: 'absolute right-1 top-1/2',
+                  style: { transform: 'translateY(-50%)' },
+                  children: fmtGB(max / 2)
+                }),
+                jsx('span', { className: 'absolute bottom-0 right-1', children: '0' })
+              ]
+            }),
+            jsxs('div', {
+              className: 'relative flex min-h-0 items-end gap-px',
+              children: [
+                jsx('span', {
+                  className: 'pointer-events-none absolute inset-x-0 top-0',
+                  style: { borderTop: '1px solid var(--ui-stroke-secondary)' }
+                }),
+                jsx('span', {
+                  className: 'pointer-events-none absolute inset-x-0 top-1/2',
+                  style: { borderTop: '1px solid var(--ui-stroke-secondary)' }
+                }),
+                ...data.map(row => {
+                  const total = Number(row.used_b || 0)
+                  const height = total > 0 ? Math.max(3, total / max * 100) : 0
+                  return jsx('div', {
+                    className: 'group relative flex h-full min-w-0 flex-1 items-end',
+                    title: `${row.date} · ${fmtGB(total)}`,
+                    children: jsx('div', {
+                      className: 'w-full rounded-t-sm',
+                      style: {
+                        height: `${height}%`,
+                        minHeight: total > 0 ? '3px' : '0',
+                        background: 'var(--ui-accent)'
+                      }
+                    })
+                  }, row.date)
+                })
+              ]
+            }),
+            jsx('span', {}),
+            jsx('div', {
+              className: 'flex min-w-0 gap-px',
+              children: data.map((row, index) =>
+                jsx('span', {
+                  className: 'min-w-0 flex-1 text-center text-[0.4375rem] leading-[0.625rem]',
+                  style: { color: 'var(--ui-text-quaternary)' },
+                  children: index % 5 === 4 || index === data.length - 1 ? row.date.slice(8) : ''
+                }, row.date)
+              )
+            })
+          ]
+        })
+      ]
+    })
+  })
+}
+
+function JmsPage() {
+  const queryClient = useQueryClient()
+  const query = useJms(30000)
+  const refresh = useMutation({
+    mutationFn: () => pluginContext.rest('/jms/refresh', { method: 'POST' }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['usage-center', 'jms'] })
+  })
+  const forget = useMutation({
+    mutationFn: () => pluginContext.rest('/jms/config', { method: 'DELETE' }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['usage-center', 'jms'] })
+  })
+  if (query.isLoading && !query.data) {
+    return jsx('div', {
+      className: 'flex h-full items-center justify-center gap-2 text-xs',
+      style: { color: 'var(--ui-text-tertiary)' },
+      children: [jsx(GlyphSpinner, {}), '正在读取 VPN 流量…']
+    })
+  }
+  const data = query.data
+  if (query.isError && !data) {
+    return jsxs('div', {
+      className: 'flex h-full flex-col items-center justify-center gap-3 p-6 text-center',
+      children: [
+        jsx('div', { className: 'text-sm font-semibold', children: 'VPN 流量后端不可用' }),
+        jsx('div', {
+          className: 'max-w-md text-[0.75rem]',
+          style: { color: 'var(--ui-text-tertiary)' },
+          children: '需要重挂 Usage Center 后端后才会出现 /jms 接口。'
+        }),
+        jsx(Button, { onClick: () => query.refetch(), children: '重试' })
+      ]
+    })
+  }
+  const usage = data?.usage
+  const status = data?.status || 'unavailable'
+  const daily = [...(usage?.daily || [])].slice().reverse()
+  return jsx('div', {
+    className: 'h-full min-h-0 overflow-auto',
+    children: jsxs('div', {
+      className: 'mx-auto flex min-h-full max-w-[1600px] flex-col gap-2.5 p-3',
+      children: [
+        jsxs('header', {
+          className: 'flex min-w-0 items-center justify-between gap-3',
+          children: [
+            jsxs('div', {
+              className: 'flex min-w-0 items-center gap-2',
+              children: [
+                jsx('h1', { className: 'shrink-0 text-base font-semibold', children: 'VPN 流量' }),
+                jsx(StatusPill, {
+                  status: status === 'available' ? 'available' : status === 'stale' ? 'stale' : 'unavailable',
+                  compact: true,
+                  children: status === 'available' ? '实时' : status === 'stale' ? '过期' : status === 'unconfigured' ? '未配置' : '不可查'
+                }),
+                data?.config?.configured
+                  ? jsx('span', {
+                      className: 'truncate text-[0.625rem]',
+                      style: { color: 'var(--ui-text-tertiary)' },
+                      children: `JMS #${data.config.service} · ${data.config.id_masked}`
+                    })
+                  : null
+              ]
+            }),
+            jsxs('div', {
+              className: 'flex shrink-0 items-center gap-2',
+              children: [
+                jsx('span', {
+                  className: 'hidden text-[0.5625rem] tabular-nums sm:inline',
+                  style: { color: 'var(--ui-text-quaternary)' },
+                  children: fmtTime(data?.sampled_at || data?.generated_at)
+                }),
+                jsx(Button, {
+                  size: 'sm',
+                  variant: 'secondary',
+                  onClick: () => host.navigate('/usage-center'),
+                  children: '模型用量'
+                }),
+                jsx(Button, {
+                  size: 'sm',
+                  variant: 'secondary',
+                  disabled: refresh.isPending || status === 'unconfigured',
+                  onClick: () => refresh.mutate(),
+                  children: refresh.isPending ? '…' : '↻'
+                })
+              ]
+            })
+          ]
+        }),
+        status === 'unconfigured'
+          ? jsx(Panel, {
+              className: 'px-3 py-3',
+              children: jsxs('div', {
+                className: 'flex max-w-xl flex-col gap-2',
+                children: [
+                  jsx('h3', { className: 'text-xs font-semibold', children: '接入 Just My Socks' }),
+                  jsx('p', {
+                    className: 'text-[0.6875rem]',
+                    style: { color: 'var(--ui-text-tertiary)' },
+                    children: '不需要邮箱密码。会员页底部的 Bandwidth counter API，或应用订阅链接即可。密钥只存在本机 usage-center/jms.json。'
+                  }),
+                  jsx(JmsConfigForm, {})
+                ]
+              })
+            })
+          : null,
+        usage
+          ? jsxs('div', {
+              className: 'grid min-h-0 gap-2',
+              style: { gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' },
+              children: [
+                jsx(JmsStat, {
+                  title: '本周期已用',
+                  value: fmtGB(usage.used_b),
+                  hint: `${fmtPercent(usage.used_percent)} · ${fmtInteger(usage.used_b)} B`
+                }),
+                jsx(JmsStat, {
+                  title: '剩余',
+                  value: fmtGB(usage.remaining_b),
+                  hint: `${fmtPercent(usage.remaining_percent)} · 重置 ${fmtTime(usage.reset_at)}`
+                }),
+                jsx(JmsStat, {
+                  title: '套餐',
+                  value: fmtGB(usage.limit_b),
+                  hint: `每月洛杉矶时间 ${usage.reset_day} 日 0 点重置`
+                })
+              ]
+            })
+          : null,
+        usage
+          ? jsxs('div', {
+              className: 'grid min-h-0 gap-2',
+              style: { gridTemplateColumns: 'minmax(220px, 0.7fr) repeat(2, minmax(0, 1fr))' },
+              children: [
+                jsx(Panel, {
+                  className: 'px-2.5 py-2',
+                  children: jsx(QuotaGauge, {
+                    remaining: usage.remaining_percent,
+                    label: '剩余流量',
+                    resetAt: usage.reset_at
+                  })
+                }),
+                jsx(JmsStat, {
+                  title: '今日',
+                  value: data.sample_count > 1 ? fmtGB(usage.today_b) : '采样中',
+                  hint: data.sample_count > 1 ? '上海时区自然日 · 采样差值' : '需要至少两次采样才能拆日'
+                }),
+                jsx(JmsStat, {
+                  title: '本周',
+                  value: data.sample_count > 1 ? fmtGB(usage.week_b) : '采样中',
+                  hint: `已采样 ${fmtInteger(data.sample_count)} 次`
+                })
+              ]
+            })
+          : null,
+        usage ? jsx(JmsDailyTrend, { rows: usage.daily }) : null,
+        usage
+          ? jsx(Panel, {
+              className: 'px-2.5 py-2',
+              children: jsxs('div', {
+                className: 'flex min-h-0 flex-col',
+                children: [
+                  jsxs('div', {
+                    className: 'flex items-baseline justify-between gap-2',
+                    children: [
+                      jsx('h3', { className: 'text-xs font-semibold', children: '每日明细' }),
+                      jsx('span', {
+                        className: 'text-[0.5rem]',
+                        style: { color: 'var(--ui-text-quaternary)' },
+                        children: '新的一天会在下次采样后出现'
+                      })
+                    ]
+                  }),
+                  daily.length
+                    ? jsxs('div', {
+                        className: 'mt-1.5 min-h-0 overflow-auto',
+                        children: [
+                          jsxs('div', {
+                            className: 'grid gap-2 pb-1 text-[0.5rem]',
+                            style: {
+                              gridTemplateColumns: 'minmax(0, 1fr) minmax(6rem, 0.6fr)',
+                              color: 'var(--ui-text-quaternary)'
+                            },
+                            children: [
+                              jsx('span', { children: '日期' }),
+                              jsx('span', { className: 'text-right', children: '用量' })
+                            ]
+                          }),
+                          daily.slice(0, 31).map(row =>
+                            jsxs('div', {
+                              className: 'grid items-center gap-2 border-t py-1 text-[0.625rem]',
+                              style: {
+                                gridTemplateColumns: 'minmax(0, 1fr) minmax(6rem, 0.6fr)',
+                                borderColor: 'var(--ui-stroke-secondary)'
+                              },
+                              children: [
+                                jsx('span', { className: 'tabular-nums', children: row.date }),
+                                jsx('span', {
+                                  className: 'text-right font-semibold tabular-nums',
+                                  children: fmtGB(row.used_b)
+                                })
+                              ]
+                            }, row.date)
+                          )
+                        ]
+                      })
+                    : jsx('div', {
+                        className: 'py-6 text-center text-[0.6875rem]',
+                        style: { color: 'var(--ui-text-quaternary)' },
+                        children: '还没有跨天差值。保持 Desktop 打开，或等定时采样。'
+                      })
+                ]
+              })
+            })
+          : null,
+        data?.config?.configured
+          ? jsx(Panel, {
+              className: 'px-2.5 py-2',
+              children: jsxs('div', {
+                className: 'flex flex-col gap-2',
+                children: [
+                  jsxs('div', {
+                    className: 'flex items-baseline justify-between gap-2',
+                    children: [
+                      jsx('h3', { className: 'text-xs font-semibold', children: '账号' }),
+                      jsx(Button, {
+                        size: 'sm',
+                        variant: 'secondary',
+                        disabled: forget.isPending,
+                        onClick: () => forget.mutate(),
+                        children: '清除本机密钥'
+                      })
+                    ]
+                  }),
+                  jsx(JmsConfigForm, { compact: true })
+                ]
+              })
+            })
+          : null,
+        data?.reason
+          ? jsx('div', {
+              className: 'text-[0.625rem]',
+              style: { color: 'var(--ui-text-quaternary)' },
+              children: data.reason
+            })
+          : null
+      ]
+    })
+  })
+}
+
+function JmsChip({ data }) {
+  const usage = data?.usage
+  const remaining = usage?.remaining_percent
+  const known = remaining !== null && remaining !== undefined && !Number.isNaN(Number(remaining))
+  const tone = quotaTone(known ? remaining : null)
+  return jsxs('span', {
+    className: 'inline-flex h-full min-w-0 items-center gap-1',
+    children: [
+      jsx('span', {
+        className: 'relative h-1 w-3.5 shrink-0 overflow-hidden rounded-full',
+        style: { background: 'var(--ui-stroke-secondary)' },
+        'aria-hidden': true,
+        children: known
+          ? jsx('span', {
+              className: 'absolute inset-y-0 left-0 rounded-full',
+              style: {
+                width: `${Math.max(0, Math.min(100, remaining))}%`,
+                background: tone
+              }
+            })
+          : null
+      }),
+      jsx('span', { className: 'shrink-0 text-(--ui-text-quaternary)', children: 'VPN' }),
+      jsx('span', {
+        className: 'shrink-0 font-medium tabular-nums',
+        style: { color: tone },
+        children: known ? fmtGB(usage.remaining_b) : '—'
+      })
+    ]
+  })
+}
+
+function JmsHoverCard({ data }) {
+  const usage = data?.usage || {}
+  return jsxs('div', {
+    className: 'flex w-full flex-col gap-2 text-[0.75rem] leading-snug text-(--ui-text-primary)',
+    children: [
+      jsxs('div', {
+        className: 'flex items-baseline justify-between gap-3',
+        children: [
+          jsx('span', { className: 'font-medium', children: 'Just My Socks' }),
+          jsx('span', { className: 'tabular-nums text-[0.5625rem] text-(--ui-text-quaternary)', children: data?.config?.service ? `#${data.config.service}` : '' })
+        ]
+      }),
+      jsxs('div', {
+        className: 'flex items-baseline justify-between gap-3',
+        children: [
+          jsx('span', { className: 'text-(--ui-text-quaternary)', children: '已用 / 剩余' }),
+          jsx('span', { className: 'font-semibold tabular-nums', children: `${fmtGB(usage.used_b)} / ${fmtGB(usage.remaining_b)}` })
+        ]
+      }),
+      jsxs('div', {
+        className: 'flex items-baseline justify-between gap-3',
+        children: [
+          jsx('span', { className: 'text-(--ui-text-quaternary)', children: '今日' }),
+          jsx('span', { className: 'tabular-nums', children: data?.sample_count > 1 ? fmtGB(usage.today_b) : '采样中' })
+        ]
+      }),
+      jsxs('div', {
+        className: 'flex items-baseline justify-between gap-3 text-(--ui-text-quaternary)',
+        children: [
+          jsx('span', { children: '重置' }),
+          jsx('span', { className: 'tabular-nums', children: fmtTime(usage.reset_at) })
+        ]
+      })
+    ]
+  })
+}
 
 function useSummary(interval = 30000) {
   const focusedSessionId = useHostState('focusedSessionId')
@@ -1036,6 +1560,13 @@ function UsageCenterPage() {
                   className: 'hidden text-[0.5625rem] tabular-nums sm:inline',
                   style: { color: 'var(--ui-text-quaternary)' },
                   children: fmtTime(data.generated_at)
+                }),
+                jsx(Button, {
+                  size: 'sm',
+                  variant: 'secondary',
+                  onClick: () => host.navigate('/usage-center/vpn'),
+                  title: '打开 VPN 流量页',
+                  children: 'VPN'
                 }),
                 jsx(Button, {
                   size: 'sm',
@@ -1209,7 +1740,7 @@ function WeekChip({ value }) {
   })
 }
 
-function HoverChip({ ariaLabel, card, children, startOpen = false, wide = false }) {
+function HoverChip({ ariaLabel, card, children, startOpen = false, wide = false, href = '/usage-center' }) {
   const [open, setOpen] = useState(startOpen)
   const show = event => {
     event.preventDefault()
@@ -1234,7 +1765,7 @@ function HoverChip({ ariaLabel, card, children, startOpen = false, wide = false 
           onClick: () => {
             haptic('tap')
             setOpen(false)
-            host.navigate('/usage-center')
+            host.navigate(href)
           },
           children
         })
@@ -1510,6 +2041,7 @@ function ProviderHoverBlock({ name, data, periods, prefs }) {
 function UsageStatus() {
   const [prefs] = useDisplayPrefs()
   const summary = useSummary(60000)
+  const jms = useJms(60000)
   const providers = summary.data?.providers || {}
   const todayValue = summary.data?.usage?.periods?.today
   const weekValue = summary.data?.usage?.periods?.week
@@ -1556,6 +2088,14 @@ function UsageStatus() {
       children: jsx(StatusQuotaChip, { item: item.snap, prefs })
     }, item.name))
   })
+  if (prefs.showJms !== false) {
+    chips.push(jsx(HoverChip, {
+      ariaLabel: 'VPN 剩余流量',
+      href: '/usage-center/vpn',
+      card: jsx(JmsHoverCard, { data: jms.data }),
+      children: jsx(JmsChip, { data: jms.data })
+    }, 'jms'))
+  }
   const loading = summary.isLoading && !summary.data
   if (loading) {
     return jsxs('span', {
@@ -1581,12 +2121,12 @@ function UsageStatus() {
 export default {
   id: 'usage-center',
   name: '模型用量中心',
-  description: '按 Hermes 配置档聚合模型 Token、成本与 Codex / Grok / Claude 官方额度',
+  description: '按 Hermes 配置档聚合模型 Token、官方额度，以及 Just My Socks 流量',
   defaultEnabled: true,
   register(ctx) {
     pluginContext = ctx
     hydratePrefs()
-    ctx.storage.set('loaded-version', '1.11.0')
+    ctx.storage.set('loaded-version', '1.12.0')
     ctx.registerMany([
       {
         id: 'page',
@@ -1595,10 +2135,22 @@ export default {
         render: () => jsx(UsageCenterPage, {})
       },
       {
+        id: 'vpn-page',
+        area: ROUTES_AREA,
+        data: { path: '/usage-center/vpn' },
+        render: () => jsx(JmsPage, {})
+      },
+      {
         id: 'nav',
         area: SIDEBAR_NAV_AREA,
         order: 72,
         data: { path: '/usage-center', label: '模型用量', codicon: 'graph' }
+      },
+      {
+        id: 'vpn-nav',
+        area: SIDEBAR_NAV_AREA,
+        order: 73,
+        data: { path: '/usage-center/vpn', label: 'VPN 流量', codicon: 'globe' }
       },
       {
         id: 'status-chips',
@@ -1614,6 +2166,16 @@ export default {
           label: '模型用量',
           keywords: ['usage', 'token', 'quota', '用量', '额度', '模型'],
           run: () => host.navigate('/usage-center')
+        }
+      },
+      {
+        id: 'open-vpn',
+        area: PALETTE_AREA,
+        data: {
+          id: 'usage-center.open-vpn',
+          label: 'VPN 流量',
+          keywords: ['vpn', 'jms', 'justmysocks', '流量', '带宽'],
+          run: () => host.navigate('/usage-center/vpn')
         }
       }
     ])

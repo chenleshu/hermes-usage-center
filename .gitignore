@@ -5,3 +5,5 @@ __pycache__/
 .env
 *.log
 .DS_Store
+jms.json
+jms-history.json

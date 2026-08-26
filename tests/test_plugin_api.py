@@ -486,5 +486,83 @@ class ResetCycleTests(unittest.TestCase):
         self.assertEqual(api.canonical_provider("", "claude-opus-4-6"), "anthropic")
 
 
+class JmsTrafficTests(unittest.TestCase):
+    def test_parses_bandwidth_and_subscription_urls(self):
+        api = load_plugin_api()
+        counter = api.parse_jms_endpoint(
+            "https://justmysocks6.net/members/getbwcounter.php?service=1436858&id=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        )
+        sub = api.parse_jms_endpoint(
+            "https://jmssub.net/members/getsub.php?service=1436858&id=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        )
+        self.assertEqual(counter["service"], "1436858")
+        self.assertEqual(counter["id"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        self.assertEqual(counter["host"], "justmysocks6.net")
+        self.assertEqual(sub["service"], "1436858")
+        self.assertEqual(sub["id"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        self.assertEqual(sub["host"], "justmysocks6.net")
+
+    def test_converts_justmysocks_bytes_with_decimal_gigabytes(self):
+        api = load_plugin_api()
+        self.assertEqual(api.bytes_to_gb(1_000_000_000_000), 1000.0)
+        self.assertAlmostEqual(api.bytes_to_gb(268_380_703_102), 268.380703102)
+
+    def test_next_reset_is_los_angeles_midnight_on_the_billing_day(self):
+        api = load_plugin_api()
+        tz = ZoneInfo("Asia/Shanghai")
+        now = datetime(2026, 8, 27, 12, 0, tzinfo=tz)
+        reset = api.next_jms_reset(15, now)
+        self.assertEqual(reset.tzinfo, ZoneInfo("America/Los_Angeles"))
+        self.assertEqual(reset.isoformat(), "2026-09-15T00:00:00-07:00")
+
+    def test_daily_deltas_split_growth_and_treat_counter_drop_as_reset(self):
+        api = load_plugin_api()
+        tz = ZoneInfo("Asia/Shanghai")
+        samples = [
+            {"ts": "2026-08-25T23:00:00+08:00", "used_b": 100_000_000_000},
+            {"ts": "2026-08-26T12:00:00+08:00", "used_b": 110_000_000_000},
+            {"ts": "2026-08-27T09:00:00+08:00", "used_b": 125_000_000_000},
+            {"ts": "2026-08-27T10:00:00+08:00", "used_b": 2_000_000_000},
+            {"ts": "2026-08-27T18:00:00+08:00", "used_b": 5_000_000_000},
+        ]
+        daily = {row["date"]: row["used_b"] for row in api.jms_daily_deltas(samples, tz)}
+        self.assertEqual(daily["2026-08-26"], 10_000_000_000)
+        self.assertEqual(daily["2026-08-27"], 15_000_000_000 + 2_000_000_000 + 3_000_000_000)
+
+    def test_summary_uses_latest_sample_and_local_today_week_totals(self):
+        api = load_plugin_api()
+        tz = ZoneInfo("Asia/Shanghai")
+        now = datetime(2026, 8, 27, 20, 0, tzinfo=tz)
+        samples = [
+            {"ts": "2026-08-24T10:00:00+08:00", "used_b": 200_000_000_000, "limit_b": 1_000_000_000_000, "reset_day": 15},
+            {"ts": "2026-08-25T10:00:00+08:00", "used_b": 220_000_000_000, "limit_b": 1_000_000_000_000, "reset_day": 15},
+            {"ts": "2026-08-26T10:00:00+08:00", "used_b": 250_000_000_000, "limit_b": 1_000_000_000_000, "reset_day": 15},
+            {"ts": "2026-08-27T20:00:00+08:00", "used_b": 268_380_703_102, "limit_b": 1_000_000_000_000, "reset_day": 15},
+        ]
+        summary = api.summarize_jms(samples, now=now, tz=tz)
+        self.assertEqual(summary["used_b"], 268_380_703_102)
+        self.assertEqual(summary["limit_b"], 1_000_000_000_000)
+        self.assertEqual(summary["remaining_b"], 1_000_000_000_000 - 268_380_703_102)
+        self.assertAlmostEqual(summary["used_gb"], 268.380703102)
+        self.assertEqual(summary["limit_gb"], 1000.0)
+        self.assertEqual(summary["today_b"], 18_380_703_102)
+        self.assertEqual(summary["week_b"], 68_380_703_102)
+        self.assertEqual(summary["reset_day"], 15)
+        self.assertEqual(summary["reset_at"], "2026-09-15T00:00:00-07:00")
+
+    def test_public_config_masks_uuid(self):
+        api = load_plugin_api()
+        public = api.public_jms_config({
+            "host": "justmysocks6.net",
+            "service": "1436858",
+            "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        })
+        self.assertTrue(public["configured"])
+        self.assertEqual(public["service"], "1436858")
+        self.assertEqual(public["host"], "justmysocks6.net")
+        self.assertEqual(public["id_masked"], "aaaa…eeee")
+        self.assertNotIn("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", json.dumps(public))
+
+
 if __name__ == "__main__":
     unittest.main()
