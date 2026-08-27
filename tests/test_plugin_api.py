@@ -4,11 +4,14 @@ import importlib.util
 import json
 import sqlite3
 import tempfile
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 
@@ -519,15 +522,54 @@ class JmsTrafficTests(unittest.TestCase):
         api = load_plugin_api()
         tz = ZoneInfo("Asia/Shanghai")
         samples = [
-            {"ts": "2026-08-25T23:00:00+08:00", "used_b": 100_000_000_000},
+            {"ts": "2026-08-26T08:00:00+08:00", "used_b": 100_000_000_000},
             {"ts": "2026-08-26T12:00:00+08:00", "used_b": 110_000_000_000},
-            {"ts": "2026-08-27T09:00:00+08:00", "used_b": 125_000_000_000},
+            {"ts": "2026-08-26T18:00:00+08:00", "used_b": 125_000_000_000},
+            {"ts": "2026-08-27T08:00:00+08:00", "used_b": 125_000_000_000},
             {"ts": "2026-08-27T10:00:00+08:00", "used_b": 2_000_000_000},
             {"ts": "2026-08-27T18:00:00+08:00", "used_b": 5_000_000_000},
         ]
         daily = {row["date"]: row["used_b"] for row in api.jms_daily_deltas(samples, tz)}
-        self.assertEqual(daily["2026-08-26"], 10_000_000_000)
-        self.assertEqual(daily["2026-08-27"], 15_000_000_000 + 2_000_000_000 + 3_000_000_000)
+        self.assertEqual(daily["2026-08-26"], 25_000_000_000)
+        self.assertEqual(daily["2026-08-27"], 2_000_000_000 + 3_000_000_000)
+
+    def test_daily_deltas_split_cross_midnight_interval_by_elapsed_time(self):
+        api = load_plugin_api()
+        tz = ZoneInfo("Asia/Shanghai")
+        samples = [
+            {"ts": "2026-08-27T22:00:00+08:00", "used_b": 100},
+            {"ts": "2026-08-28T02:00:00+08:00", "used_b": 500},
+        ]
+
+        daily = {row["date"]: row["used_b"] for row in api.jms_daily_deltas(samples, tz)}
+
+        self.assertEqual(daily, {"2026-08-27": 200, "2026-08-28": 200})
+
+    def test_daily_deltas_split_cross_week_and_long_downtime_deterministically(self):
+        api = load_plugin_api()
+        tz = ZoneInfo("Asia/Shanghai")
+        samples = [
+            {"ts": "2026-08-30T18:00:00+08:00", "used_b": 1_000},
+            {"ts": "2026-09-01T06:00:00+08:00", "used_b": 4_600},
+        ]
+
+        daily = {row["date"]: row["used_b"] for row in api.jms_daily_deltas(samples, tz)}
+
+        self.assertEqual(
+            daily,
+            {
+                "2026-08-30": 600,
+                "2026-08-31": 2_400,
+                "2026-09-01": 600,
+            },
+        )
+        summary = api.summarize_jms(
+            samples,
+            now=datetime(2026, 9, 1, 12, 0, tzinfo=tz),
+            tz=tz,
+        )
+        self.assertEqual(summary["today_b"], 600)
+        self.assertEqual(summary["week_b"], 3_000)
 
     def test_summary_uses_latest_sample_and_local_today_week_totals(self):
         api = load_plugin_api()
@@ -545,7 +587,7 @@ class JmsTrafficTests(unittest.TestCase):
         self.assertEqual(summary["remaining_b"], 1_000_000_000_000 - 268_380_703_102)
         self.assertAlmostEqual(summary["used_gb"], 268.380703102)
         self.assertEqual(summary["limit_gb"], 1000.0)
-        self.assertEqual(summary["today_b"], 18_380_703_102)
+        self.assertEqual(summary["today_b"], 10_812_178_295)
         self.assertEqual(summary["week_b"], 68_380_703_102)
         self.assertEqual(summary["reset_day"], 15)
         self.assertEqual(summary["reset_at"], "2026-09-15T00:00:00-07:00")
@@ -562,6 +604,231 @@ class JmsTrafficTests(unittest.TestCase):
         self.assertEqual(public["host"], "justmysocks6.net")
         self.assertEqual(public["id_masked"], "aaaa…eeee")
         self.assertNotIn("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", json.dumps(public))
+
+    def test_rejects_malformed_service_and_uuid(self):
+        api = load_plugin_api()
+        invalid = [
+            "service=12x&id=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "service=1436858&id=not-a-uuid",
+            "service=1436858&id=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee",
+        ]
+        for endpoint in invalid:
+            with self.subTest(endpoint=endpoint), self.assertRaises(ValueError):
+                api.parse_jms_endpoint(endpoint)
+
+    def test_fetch_url_encodes_query_parameters(self):
+        api = load_plugin_api()
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "bw_counter_b": 10,
+            "monthly_bw_limit_b": 100,
+            "bw_reset_day_of_month": 15,
+        }).encode()
+        config = {
+            "host": "justmysocks6.net",
+            "service": "1436858",
+            "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        }
+        with patch.object(api, "urlopen", return_value=response) as opened:
+            api.fetch_jms_counter(config)
+        self.assertEqual(
+            opened.call_args.args[0].full_url,
+            "https://justmysocks6.net/members/getbwcounter.php?service=1436858&id=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        )
+
+    def test_history_is_scoped_to_irreversible_service_uuid_fingerprint(self):
+        api = load_plugin_api()
+        first = {
+            "host": "justmysocks6.net",
+            "service": "1436858",
+            "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        }
+        second = {
+            "host": "justmysocks6.net",
+            "service": "1436858",
+            "id": "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            first_identity = api.jms_config_fingerprint(first)
+            api.append_jms_sample(
+                home,
+                {
+                    "ts": "2026-08-27T10:00:00+08:00",
+                    "used_b": 10,
+                    "limit_b": 100,
+                    "reset_day": 15,
+                    "id": first["id"],
+                },
+                identity=first_identity,
+            )
+            raw = (home / "usage-center" / "jms-history.json").read_text(encoding="utf-8")
+            self.assertNotIn(first["id"], raw)
+            self.assertIn(first_identity, raw)
+            self.assertEqual(api.load_jms_samples(home, identity=first_identity)[0]["used_b"], 10)
+            self.assertEqual(api.load_jms_samples(home, identity=api.jms_config_fingerprint(second)), [])
+
+    def test_new_config_first_fetch_failure_never_surfaces_old_stale_samples(self):
+        api = load_plugin_api()
+        old_config = {
+            "host": "justmysocks6.net",
+            "service": "1436858",
+            "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        }
+        new_config = {
+            "host": "justmysocks6.net",
+            "service": "1436859",
+            "id": "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            api.save_jms_config(home, old_config)
+            api.append_jms_sample(
+                home,
+                {"ts": "2026-08-27T10:00:00+08:00", "used_b": 90, "limit_b": 100, "reset_day": 15},
+                identity=api.jms_config_fingerprint(old_config),
+            )
+            api.save_jms_config(home, new_config)
+            with (
+                patch.object(api, "resolve_profile_home", return_value=("test", home)),
+                patch.object(api, "fetch_jms_counter", side_effect=OSError("offline")),
+            ):
+                result = api.build_jms(profile="test", force=True)
+
+        self.assertEqual(result["status"], "unavailable")
+        self.assertIsNone(result["usage"])
+        self.assertEqual(result["sample_count"], 0)
+
+    def test_delete_then_reconfigure_same_identity_does_not_restore_old_samples(self):
+        api = load_plugin_api()
+        config = {
+            "host": "justmysocks6.net",
+            "service": "1436858",
+            "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            api.save_jms_config(home, config)
+            api.append_jms_sample(
+                home,
+                {"ts": "2026-08-27T10:00:00+08:00", "used_b": 90, "limit_b": 100, "reset_day": 15},
+                identity=api.jms_config_fingerprint(config),
+            )
+            api.clear_jms_config(home)
+            api.save_jms_config(home, config)
+            with (
+                patch.object(api, "resolve_profile_home", return_value=("test", home)),
+                patch.object(api, "fetch_jms_counter", side_effect=OSError("offline")),
+            ):
+                result = api.build_jms(profile="test", force=True)
+
+        self.assertEqual(result["status"], "unavailable")
+        self.assertIsNone(result["usage"])
+        self.assertEqual(result["sample_count"], 0)
+
+    def test_concurrent_forced_refreshes_serialize_fetch_and_append(self):
+        api = load_plugin_api()
+        config = {
+            "host": "justmysocks6.net",
+            "service": "1436858",
+            "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        }
+        active = 0
+        max_active = 0
+        sequence = 0
+        state_lock = threading.Lock()
+
+        def fetch(_config):
+            nonlocal active, max_active, sequence
+            with state_lock:
+                active += 1
+                max_active = max(max_active, active)
+                sequence += 1
+                current = sequence
+            time.sleep(0.02)
+            with state_lock:
+                active -= 1
+            return {
+                "ts": f"2026-08-27T10:00:{current:02d}+08:00",
+                "used_b": current,
+                "limit_b": 100,
+                "reset_day": 15,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            api.save_jms_config(home, config)
+            with (
+                patch.object(api, "resolve_profile_home", return_value=("test", home)),
+                patch.object(api, "fetch_jms_counter", side_effect=fetch),
+                ThreadPoolExecutor(max_workers=6) as pool,
+            ):
+                results = list(pool.map(lambda _: api.build_jms(profile="test", force=True), range(6)))
+            samples = api.load_jms_samples(home, identity=api.jms_config_fingerprint(config))
+
+        self.assertEqual(max_active, 1)
+        self.assertEqual(len(samples), 6)
+        self.assertTrue(all(result["status"] == "available" for result in results))
+
+    def test_config_save_waits_for_inflight_fetch_append_transaction(self):
+        api = load_plugin_api()
+        old_config = {
+            "host": "justmysocks6.net",
+            "service": "1436858",
+            "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        }
+        new_config = {
+            "host": "justmysocks6.net",
+            "service": "1436859",
+            "id": "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+        }
+        entered = threading.Event()
+        release = threading.Event()
+
+        def fetch(_config):
+            entered.set()
+            self.assertTrue(release.wait(timeout=2))
+            return {
+                "ts": "2026-08-27T10:00:00+08:00",
+                "used_b": 10,
+                "limit_b": 100,
+                "reset_day": 15,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            api.save_jms_config(home, old_config)
+            with (
+                patch.object(api, "resolve_profile_home", return_value=("test", home)),
+                patch.object(api, "fetch_jms_counter", side_effect=fetch),
+                ThreadPoolExecutor(max_workers=2) as pool,
+            ):
+                refresh_future = pool.submit(api.build_jms, profile="test", force=True)
+                self.assertTrue(entered.wait(timeout=2))
+                save_future = pool.submit(api.save_jms_config, home, new_config)
+                time.sleep(0.03)
+                self.assertFalse(save_future.done())
+                release.set()
+                refresh_future.result(timeout=2)
+                save_future.result(timeout=2)
+
+            self.assertEqual(api.load_jms_config(home)["service"], new_config["service"])
+            self.assertEqual(
+                api.load_jms_samples(home, identity=api.jms_config_fingerprint(new_config)),
+                [],
+            )
+
+
+class DesktopJmsProfileIsolationTests(unittest.TestCase):
+    def test_jms_query_key_uses_authoritative_profile(self):
+        source = (PLUGIN_API.parents[1] / "desktop" / "plugin.js").read_text(encoding="utf-8")
+        self.assertIn("function jmsQueryKey(profile)", source)
+        self.assertIn("return ['usage-center', 'jms', profile || 'default']", source)
+        use_jms = source[source.index("function useJms"):source.index("function JmsConfigForm")]
+        self.assertIn("const profile = useHostState('profile')", use_jms)
+        self.assertIn("queryKey: jmsQueryKey(profile)", use_jms)
+        self.assertIn("placeholderData: () => undefined", use_jms)
+        self.assertNotIn("queryKey: ['usage-center', 'jms']", source)
 
 
 if __name__ == "__main__":

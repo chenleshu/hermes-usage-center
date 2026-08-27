@@ -6,17 +6,20 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
+import hashlib
 import json
 import os
 import queue
 import re
 import shutil
 import sqlite3
+import tempfile
 import threading
 import time as time_module
+import uuid
 from collections import defaultdict
-from datetime import date, datetime, time, timedelta
-from urllib.parse import parse_qs, urlparse
+from datetime import date, datetime, time, timedelta, timezone
+from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 from pathlib import Path
 from typing import Any
@@ -741,12 +744,28 @@ def aggregate_usage(
 
 def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temp.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    os.replace(temp, path)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            json.dump(value, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+        temp_path = None
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def _xai_cache_path(home: Path | None = None) -> Path:
@@ -1049,9 +1068,11 @@ def build_summary(
 JMS_GB = 1_000_000_000
 JMS_DEFAULT_HOST = "justmysocks6.net"
 JMS_MEMBER_HOST_RE = re.compile(r"^justmysocks\d*\.net$", re.IGNORECASE)
+JMS_SERVICE_RE = re.compile(r"^[1-9]\d*$")
+JMS_FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 JMS_SAMPLE_MIN_INTERVAL = 15 * 60
 JMS_BILLING_TZ = ZoneInfo("America/Los_Angeles")
-_jms_refresh_lock = threading.Lock()
+_jms_refresh_lock = threading.RLock()
 
 
 def parse_jms_endpoint(value: str) -> dict[str, str]:
@@ -1067,10 +1088,24 @@ def parse_jms_endpoint(value: str) -> dict[str, str]:
     ident = (query.get("id") or [""])[0].strip()
     if not service or not ident:
         raise ValueError("Just My Socks URL must include service and id")
+    if not JMS_SERVICE_RE.fullmatch(service):
+        raise ValueError("Just My Socks service must be a positive decimal integer")
+    try:
+        parsed_uuid = uuid.UUID(ident)
+    except (AttributeError, ValueError) as exc:
+        raise ValueError("Just My Socks id must be a UUID") from exc
+    if str(parsed_uuid) != ident.lower():
+        raise ValueError("Just My Socks id must use canonical UUID format")
     host = (parsed.hostname or "").strip().lower()
     if not JMS_MEMBER_HOST_RE.match(host):
         host = JMS_DEFAULT_HOST
-    return {"host": host, "service": service, "id": ident}
+    return {"host": host, "service": service, "id": str(parsed_uuid)}
+
+
+def jms_config_fingerprint(config: dict[str, Any]) -> str:
+    """Return an irreversible identity for one service + UUID pair."""
+    material = f"usage-center:jms:v1\0{config['service']}\0{config['id']}".encode("utf-8")
+    return hashlib.sha256(material).hexdigest()
 
 
 def bytes_to_gb(value: int | float) -> float:
@@ -1089,7 +1124,16 @@ def next_jms_reset(reset_day: int, now: datetime) -> datetime:
 
 
 def jms_daily_deltas(samples: list[dict[str, Any]], tz: ZoneInfo) -> list[dict[str, Any]]:
-    ordered = sorted(samples, key=lambda item: str(item.get("ts") or ""))
+    """Split each counter delta across local days by elapsed-time proportion.
+
+    Integer remainders use largest-remainder allocation with chronological
+    tie-breaking, so every byte is conserved and repeated runs are identical.
+    """
+    def sample_time(item: dict[str, Any]) -> datetime:
+        stamp = datetime.fromisoformat(str(item["ts"]).replace("Z", "+00:00"))
+        return stamp.replace(tzinfo=tz) if stamp.tzinfo is None else stamp
+
+    ordered = sorted(samples, key=sample_time)
     days: dict[str, int] = defaultdict(int)
     if len(ordered) < 2:
         return []
@@ -1098,11 +1142,36 @@ def jms_daily_deltas(samples: list[dict[str, Any]], tz: ZoneInfo) -> list[dict[s
         previous_used = int(previous.get("used_b") or 0)
         current_used = int(current.get("used_b") or 0)
         delta = current_used - previous_used if current_used >= previous_used else current_used
-        stamp = datetime.fromisoformat(str(current["ts"]).replace("Z", "+00:00"))
-        if stamp.tzinfo is None:
-            stamp = stamp.replace(tzinfo=tz)
-        day = stamp.astimezone(tz).date().isoformat()
-        days[day] += max(0, delta)
+        start = sample_time(previous).astimezone(tz)
+        end = sample_time(current).astimezone(tz)
+        delta = max(0, delta)
+        if delta and end > start:
+            segments: list[tuple[str, int]] = []
+            cursor = start
+            while cursor < end:
+                boundary = datetime.combine(cursor.date() + timedelta(days=1), time.min, tzinfo=tz)
+                segment_end = min(end, boundary)
+                elapsed = segment_end.astimezone(timezone.utc) - cursor.astimezone(timezone.utc)
+                elapsed_us = (
+                    elapsed.days * 86_400_000_000
+                    + elapsed.seconds * 1_000_000
+                    + elapsed.microseconds
+                )
+                segments.append((cursor.date().isoformat(), elapsed_us))
+                cursor = segment_end
+            total_us = sum(weight for _, weight in segments)
+            allocations = []
+            allocated = 0
+            for index, (day, weight) in enumerate(segments):
+                amount, remainder = divmod(delta * weight, total_us)
+                allocations.append([day, amount, remainder, index])
+                allocated += amount
+            for row in sorted(allocations, key=lambda item: (-item[2], item[3]))[:delta - allocated]:
+                row[1] += 1
+            for day, amount, _, _ in allocations:
+                days[day] += amount
+        elif delta:
+            days[end.date().isoformat()] += delta
         previous = current
     return [{"date": day, "used_b": used} for day, used in sorted(days.items())]
 
@@ -1171,63 +1240,90 @@ def _jms_history_path(home: Path) -> Path:
 
 
 def load_jms_config(home: Path) -> dict[str, str] | None:
-    path = _jms_config_path(home)
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
-        return None
-    service = str(data.get("service") or "").strip()
-    ident = str(data.get("id") or "").strip()
-    if not service or not ident:
-        return None
-    host = str(data.get("host") or JMS_DEFAULT_HOST).strip().lower()
-    if not JMS_MEMBER_HOST_RE.match(host):
-        host = JMS_DEFAULT_HOST
-    return {"host": host, "service": service, "id": ident}
+    with _jms_refresh_lock:
+        path = _jms_config_path(home)
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            query = urlencode({
+                "service": str(data.get("service") or ""),
+                "id": str(data.get("id") or ""),
+            })
+            return parse_jms_endpoint(
+                f"https://{data.get('host') or JMS_DEFAULT_HOST}/members/getbwcounter.php?{query}"
+            )
+        except (OSError, ValueError, json.JSONDecodeError, TypeError):
+            return None
 
 
 def save_jms_config(home: Path, config: dict[str, str]) -> dict[str, str]:
-    parsed = parse_jms_endpoint(
-        config.get("url")
-        or f"https://{config.get('host') or JMS_DEFAULT_HOST}/members/getbwcounter.php"
-        f"?service={config.get('service') or ''}&id={config.get('id') or ''}"
-    )
-    _atomic_write_json(_jms_config_path(home), parsed)
-    return parsed
+    with _jms_refresh_lock:
+        query = urlencode({
+            "service": config.get("service") or "",
+            "id": config.get("id") or "",
+        })
+        parsed = parse_jms_endpoint(
+            config.get("url")
+            or f"https://{config.get('host') or JMS_DEFAULT_HOST}/members/getbwcounter.php?{query}"
+        )
+        previous = load_jms_config(home)
+        _atomic_write_json(_jms_config_path(home), parsed)
+        if previous is None or jms_config_fingerprint(previous) != jms_config_fingerprint(parsed):
+            history = _jms_history_path(home)
+            if history.exists():
+                history.unlink()
+        return parsed
 
 
 def clear_jms_config(home: Path) -> None:
-    path = _jms_config_path(home)
-    if path.exists():
-        path.unlink()
+    with _jms_refresh_lock:
+        for path in (_jms_config_path(home), _jms_history_path(home)):
+            if path.exists():
+                path.unlink()
 
 
-def load_jms_samples(home: Path) -> list[dict[str, Any]]:
-    path = _jms_history_path(home)
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
-        return []
-    return list(data.get("samples") or [])
+def load_jms_samples(home: Path, *, identity: str) -> list[dict[str, Any]]:
+    with _jms_refresh_lock:
+        if not JMS_FINGERPRINT_RE.fullmatch(identity):
+            return []
+        path = _jms_history_path(home)
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            return []
+        if data.get("identity") != identity:
+            return []
+        return list(data.get("samples") or [])
 
 
-def append_jms_sample(home: Path, sample: dict[str, Any], *, max_samples: int = 4000) -> list[dict[str, Any]]:
-    samples = load_jms_samples(home)
-    samples.append(sample)
-    samples = samples[-max(100, int(max_samples)):]
-    _atomic_write_json(_jms_history_path(home), {"samples": samples})
-    return samples
+def append_jms_sample(
+    home: Path,
+    sample: dict[str, Any],
+    *,
+    identity: str,
+    max_samples: int = 4000,
+) -> list[dict[str, Any]]:
+    with _jms_refresh_lock:
+        if not JMS_FINGERPRINT_RE.fullmatch(identity):
+            raise ValueError("Just My Socks history identity must be a SHA-256 fingerprint")
+        samples = load_jms_samples(home, identity=identity)
+        samples.append({
+            "ts": str(sample["ts"]),
+            "used_b": int(sample["used_b"]),
+            "limit_b": int(sample["limit_b"]),
+            "reset_day": int(sample["reset_day"]),
+        })
+        samples = samples[-max(100, int(max_samples)):]
+        _atomic_write_json(_jms_history_path(home), {"identity": identity, "samples": samples})
+        return samples
 
 
 def fetch_jms_counter(config: dict[str, str], *, timeout: float = 15.0) -> dict[str, Any]:
-    url = (
-        f"https://{config['host']}/members/getbwcounter.php"
-        f"?service={config['service']}&id={config['id']}"
-    )
+    query = urlencode({"service": config["service"], "id": config["id"]})
+    url = f"https://{config['host']}/members/getbwcounter.php?{query}"
     request = Request(url, headers={"User-Agent": "HermesUsageCenter/1.12"})
     with urlopen(request, timeout=max(5.0, float(timeout))) as response:
         payload = json.loads(response.read().decode("utf-8"))
@@ -1240,57 +1336,59 @@ def fetch_jms_counter(config: dict[str, str], *, timeout: float = 15.0) -> dict[
 
 
 def build_jms(*, profile: str | None = None, force: bool = False) -> dict[str, Any]:
-    profile_name, home = resolve_profile_home(profile)
-    generated_at = datetime.now(LOCAL_TZ)
-    config = load_jms_config(home)
-    if not config:
+    with _jms_refresh_lock:
+        profile_name, home = resolve_profile_home(profile)
+        generated_at = datetime.now(LOCAL_TZ)
+        config = load_jms_config(home)
+        if not config:
+            return {
+                "profile": profile_name,
+                "generated_at": generated_at.isoformat(),
+                "timezone": str(LOCAL_TZ),
+                "status": "unconfigured",
+                "reason": "粘贴 Just My Socks 订阅或 Bandwidth counter 链接",
+                "config": public_jms_config(None),
+                "usage": None,
+                "sampled_at": None,
+                "sample_count": 0,
+            }
+        identity = jms_config_fingerprint(config)
+        samples = load_jms_samples(home, identity=identity)
+        last = samples[-1] if samples else None
+        age = None
+        if last:
+            try:
+                last_ts = datetime.fromisoformat(str(last["ts"]).replace("Z", "+00:00"))
+                if last_ts.tzinfo is None:
+                    last_ts = last_ts.replace(tzinfo=LOCAL_TZ)
+                age = (generated_at - last_ts.astimezone(LOCAL_TZ)).total_seconds()
+            except (TypeError, ValueError, KeyError):
+                age = None
+        should_fetch = force or last is None or age is None or age >= JMS_SAMPLE_MIN_INTERVAL
+        reason = None
+        status = "available"
+        if should_fetch:
+            try:
+                sample = fetch_jms_counter(config)
+                samples = append_jms_sample(home, sample, identity=identity)
+            except Exception as exc:
+                status = "stale" if samples else "unavailable"
+                reason = f"Just My Socks lookup failed: {type(exc).__name__}"
+        usage = summarize_jms(samples, now=generated_at, tz=LOCAL_TZ) if samples else None
+        if usage is None and status == "available":
+            status = "unavailable"
+            reason = "No Just My Socks samples yet"
         return {
             "profile": profile_name,
             "generated_at": generated_at.isoformat(),
             "timezone": str(LOCAL_TZ),
-            "status": "unconfigured",
-            "reason": "粘贴 Just My Socks 订阅或 Bandwidth counter 链接",
-            "config": public_jms_config(None),
-            "usage": None,
-            "sampled_at": None,
-            "sample_count": 0,
+            "status": status,
+            "reason": reason,
+            "config": public_jms_config(config),
+            "usage": usage,
+            "sampled_at": samples[-1]["ts"] if samples else None,
+            "sample_count": len(samples),
         }
-    samples = load_jms_samples(home)
-    last = samples[-1] if samples else None
-    age = None
-    if last:
-        try:
-            last_ts = datetime.fromisoformat(str(last["ts"]).replace("Z", "+00:00"))
-            if last_ts.tzinfo is None:
-                last_ts = last_ts.replace(tzinfo=LOCAL_TZ)
-            age = (generated_at - last_ts.astimezone(LOCAL_TZ)).total_seconds()
-        except (TypeError, ValueError, KeyError):
-            age = None
-    should_fetch = force or last is None or age is None or age >= JMS_SAMPLE_MIN_INTERVAL
-    reason = None
-    status = "available"
-    if should_fetch:
-        try:
-            sample = fetch_jms_counter(config)
-            samples = append_jms_sample(home, sample)
-        except Exception as exc:
-            status = "stale" if samples else "unavailable"
-            reason = f"Just My Socks lookup failed: {type(exc).__name__}"
-    usage = summarize_jms(samples, now=generated_at, tz=LOCAL_TZ) if samples else None
-    if usage is None and status == "available":
-        status = "unavailable"
-        reason = "No Just My Socks samples yet"
-    return {
-        "profile": profile_name,
-        "generated_at": generated_at.isoformat(),
-        "timezone": str(LOCAL_TZ),
-        "status": status,
-        "reason": reason,
-        "config": public_jms_config(config),
-        "usage": usage,
-        "sampled_at": samples[-1]["ts"] if samples else None,
-        "sample_count": len(samples),
-    }
 
 
 @router.get("/health")
@@ -1363,8 +1461,9 @@ async def jms_save_config(
     _, home = resolve_profile_home(profile)
 
     def _save() -> dict[str, Any]:
-        save_jms_config(home, {str(key): str(value or "") for key, value in (payload or {}).items()})
-        return build_jms(profile=profile, force=True)
+        with _jms_refresh_lock:
+            save_jms_config(home, {str(key): str(value or "") for key, value in (payload or {}).items()})
+            return build_jms(profile=profile, force=True)
 
     try:
         return await asyncio.to_thread(_save)
@@ -1375,5 +1474,10 @@ async def jms_save_config(
 @router.delete("/jms/config")
 async def jms_delete_config(profile: str | None = None) -> dict[str, Any]:
     _, home = resolve_profile_home(profile)
-    await asyncio.to_thread(clear_jms_config, home)
-    return await asyncio.to_thread(build_jms, profile=profile, force=False)
+
+    def _delete() -> dict[str, Any]:
+        with _jms_refresh_lock:
+            clear_jms_config(home)
+            return build_jms(profile=profile, force=False)
+
+    return await asyncio.to_thread(_delete)

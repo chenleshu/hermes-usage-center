@@ -953,10 +953,16 @@ function fillJmsDaily(rows, count = 30) {
   return result
 }
 
+function jmsQueryKey(profile) {
+  return ['usage-center', 'jms', profile || 'default']
+}
+
 function useJms(interval = 60000) {
+  const profile = useHostState('profile')
   return useQuery({
-    queryKey: ['usage-center', 'jms'],
+    queryKey: jmsQueryKey(profile),
     queryFn: () => pluginContext.rest('/jms'),
+    placeholderData: () => undefined,
     refetchInterval: interval,
     staleTime: 10000,
     retry: 1
@@ -965,12 +971,13 @@ function useJms(interval = 60000) {
 
 function JmsConfigForm({ compact = false }) {
   const queryClient = useQueryClient()
+  const profile = useHostState('profile')
   const [url, setUrl] = useState('')
   const save = useMutation({
     mutationFn: () => pluginContext.rest('/jms/config', { method: 'POST', body: { url } }),
     onSuccess: () => {
       setUrl('')
-      queryClient.invalidateQueries({ queryKey: ['usage-center', 'jms'] })
+      queryClient.invalidateQueries({ queryKey: jmsQueryKey(profile) })
     }
   })
   return jsxs('form', {
@@ -1138,14 +1145,15 @@ function JmsDailyTrend({ rows }) {
 
 function JmsPage() {
   const queryClient = useQueryClient()
+  const profile = useHostState('profile')
   const query = useJms(30000)
   const refresh = useMutation({
     mutationFn: () => pluginContext.rest('/jms/refresh', { method: 'POST' }),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['usage-center', 'jms'] })
+    onSettled: () => queryClient.invalidateQueries({ queryKey: jmsQueryKey(profile) })
   })
   const forget = useMutation({
     mutationFn: () => pluginContext.rest('/jms/config', { method: 'DELETE' }),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['usage-center', 'jms'] })
+    onSettled: () => queryClient.invalidateQueries({ queryKey: jmsQueryKey(profile) })
   })
   if (query.isLoading && !query.data) {
     return jsx('div', {
