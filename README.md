@@ -26,6 +26,8 @@ Hermes Desktop 的模型用量插件：侧栏整页看板 + 右下角状态条�
 
 悬停全额用中文千分位。底栏与表格默认自动单位（万 / 亿）。今日合计、本周期已用、官方剩余% 三套数不互相冒充。
 
+模型用量与 VPN 流量页共用一套响应式视觉规范：页面文字不小于 13px，关键数字使用更清晰的层级；宽度达到 900px 时按首屏看板排版，趋势与周期表、明细与账号区并排，六项摘要和三家额度集中展示。更窄的窗口自动换列，只有图表内部按需横向滚动。页面进入、卡片、额度环、进度条和柱状图使用轻量动效，并遵循系统的“减少动态效果”设置。
+
 ## 安装
 
 需要 Hermes Desktop ≥ 0.20.4。
@@ -57,6 +59,7 @@ hermes plugins install usage-center
 - **本周期 Token**：官方重置窗（周额度 / Session / 5 小时窗）内的本地已用。窗口类型看官方标签，不按「还剩几小时」瞎猜。没有官方窗的模型不进这张表。
 - **官方额度**：Codex / Claude 走账户接口；Grok 走本机缓存的周额度快照。过期会标陈旧，不会拿本地 Token 反推会员余量。
 - **VPN 流量**：Just My Socks 公开的 Bandwidth counter API（`service` + UUID）。本周期已用/剩余是官方数；每日/每周是本机采样差值，官方不提供按日历史。密钥写在 `$HERMES_HOME/usage-center/jms.json`，不进 git。
+- **VPN 最近 30 天**：上海时区今天及此前 29 个自然日，图表与每日明细共用窗口，跨月不清零；图表显示完整起止日期和月/日刻度。浅色标记表示没有采样差值，不代表零流量；明细只列出窗口内有记录的日期。
 - Profile 隔离：每个 Hermes profile 用自己的 `state.db` 和额度缓存。
 
 ## 仓库结构
@@ -89,6 +92,13 @@ tests/test_plugin_api.py
 ```bash
 python -m unittest tests.test_plugin_api
 hermes plugins doctor .
+```
+
+桌面回归测试复用 Hermes 已安装的 React / jsdom（Node ≥ 22.15），不新增依赖。PowerShell 示例：
+
+```powershell
+$env:HERMES_DESKTOP_ROOT = 'C:\path\to\hermes-agent'
+node --import ./tests/desktop-loader.mjs --test ./tests/jms-desktop.test.mjs
 ```
 
 ## 许可

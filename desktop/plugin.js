@@ -290,11 +290,11 @@ function statusTone(status) {
 
 function StatusPill({ status, children, compact: dense = false }) {
   return jsxs('span', {
-    className: `inline-flex min-w-0 items-center gap-1.5 rounded-full border ${dense ? 'px-1.5 py-0 text-[0.625rem]' : 'px-2 py-0.5 text-[0.6875rem]'}`,
+    className: `uc-status-pill inline-flex min-w-0 items-center gap-1.5 rounded-full border ${dense ? 'px-1.5 py-0 text-[0.625rem]' : 'px-2 py-0.5 text-[0.6875rem]'}`,
     style: { borderColor: 'var(--ui-stroke-secondary)', color: 'var(--ui-text-secondary)' },
     children: [
       jsx('span', {
-        className: 'h-1.5 w-1.5 shrink-0 rounded-full',
+        className: `uc-status-dot h-1.5 w-1.5 shrink-0 rounded-full ${status === 'available' ? 'uc-status-dot--live' : ''}`,
         style: { background: statusTone(status) }
       }),
       jsx('span', { className: 'truncate', children })
@@ -304,7 +304,7 @@ function StatusPill({ status, children, compact: dense = false }) {
 
 function Panel({ children, className = '', title }) {
   return jsx('div', {
-    className: `min-h-0 rounded-lg border ${className}`,
+    className: `uc-panel min-h-0 rounded-lg border ${className}`,
     title,
     style: { borderColor: 'var(--ui-stroke-secondary)' },
     children
@@ -325,7 +325,7 @@ function TokenStack({ value, className = 'h-1.5' }) {
           .filter(series => Number(item[series.key] || 0) > 0)
           .map(series =>
             jsx('span', {
-              className: 'h-full',
+              className: 'uc-token-segment h-full',
               style: {
                 width: `${Number(item[series.key] || 0) / total * 100}%`,
                 background: series.color
@@ -338,7 +338,7 @@ function TokenStack({ value, className = 'h-1.5' }) {
 
 function TokenLegend() {
   return jsx('div', {
-    className: 'flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[0.5625rem]',
+    className: 'uc-token-legend flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[0.5625rem]',
     style: { color: 'var(--ui-text-quaternary)' },
     children: TOKEN_SERIES.map(series =>
       jsxs('span', {
@@ -360,10 +360,10 @@ function PeriodTile({ title, value, mode = 'natural' }) {
       ? `≈$${Number(item.estimated_cost_usd).toFixed(2)}`
       : null
   return jsx(Panel, {
-    className: 'px-2.5 py-2',
+    className: 'uc-metric-card px-2.5 py-2',
     title: `${title} · ${exactTokenTitle(item)}`,
     children: jsxs('div', {
-      className: 'flex h-full min-w-0 flex-col justify-between gap-1.5',
+      className: 'flex h-full min-w-0 flex-col justify-between gap-1',
       children: [
         jsxs('div', {
           className: 'flex min-w-0 items-baseline justify-between gap-1',
@@ -383,7 +383,7 @@ function PeriodTile({ title, value, mode = 'natural' }) {
           ]
         }),
         jsx('div', {
-          className: 'truncate text-lg font-semibold leading-none tabular-nums',
+          className: 'uc-metric-value truncate text-lg font-semibold leading-none tabular-nums',
           children: fmtCount(item.total_tokens)
         }),
         jsx(TokenStack, { value: item }),
@@ -423,8 +423,7 @@ function PeriodRibbon({ periods, rolling }) {
     { title: '近90天', value: rolling?.['90d'], mode: 'rolling' }
   ]
   return jsx('div', {
-    className: 'grid min-h-0 gap-2',
-    style: { gridTemplateColumns: 'repeat(6, minmax(0, 1fr))' },
+    className: 'uc-period-grid grid min-h-0 gap-2',
     children: items.map(item => jsx(PeriodTile, item, item.title))
   })
 }
@@ -437,16 +436,16 @@ function quotaTone(remaining) {
   return 'var(--ui-accent)'
 }
 
-function QuotaGauge({ remaining, label, resetAt }) {
+function QuotaGauge({ remaining, label, resetAt, compact = false }) {
   const known = remaining !== null && remaining !== undefined && !Number.isNaN(Number(remaining))
   const value = known ? Math.max(0, Math.min(100, Number(remaining))) : 0
   const tone = quotaTone(known ? value : null)
   return jsxs('div', {
-    className: 'flex min-w-0 items-center gap-2',
+    className: `uc-quota ${compact ? 'uc-quota--compact' : ''} flex min-w-0 items-center gap-2.5`,
     title: `${label || '额度'} · 剩余 ${known ? fmtPercent(value) : '不可查询'} · 重置 ${fmtTime(resetAt)}`,
     children: [
       jsxs('svg', {
-        className: 'h-14 w-14 shrink-0',
+        className: compact ? 'h-11 w-11 shrink-0' : 'h-14 w-14 shrink-0',
         viewBox: '0 0 64 64',
         role: 'img',
         'aria-label': `${label || '额度'}剩余${known ? fmtPercent(value) : '不可查询'}`,
@@ -460,6 +459,7 @@ function QuotaGauge({ remaining, label, resetAt }) {
             strokeWidth: 6
           }),
           jsx('circle', {
+            className: 'uc-quota-ring',
             cx: 32,
             cy: 32,
             r: 25,
@@ -475,7 +475,7 @@ function QuotaGauge({ remaining, label, resetAt }) {
             x: 32,
             y: 35,
             textAnchor: 'middle',
-            fontSize: 12,
+            fontSize: 14,
             fontWeight: 700,
             fill: 'currentColor',
             children: known ? fmtPercent(value) : '—'
@@ -510,10 +510,11 @@ function ProviderPanel({ title, data, onRefresh, refreshing }) {
         }]
       : []
   return jsx(Panel, {
-    className: 'h-full px-2.5 py-2',
+    className: 'h-full px-2.5 py-1.5',
     title: data?.reason || `${title} · ${data?.source || '官方账户'}`,
     children: jsxs('div', {
       className: 'flex h-full min-h-0 flex-col',
+      style: { minHeight: '104px' },
       children: [
         jsxs('div', {
           className: 'flex items-center justify-between gap-2',
@@ -548,13 +549,14 @@ function ProviderPanel({ title, data, onRefresh, refreshing }) {
         }),
         windows.length
           ? jsx('div', {
-              className: 'mt-1.5 grid min-h-0 flex-1 items-center gap-1.5',
+              className: 'mt-1 grid min-h-0 flex-1 items-center gap-1',
               style: { gridTemplateColumns: `repeat(${Math.min(3, windows.length)}, minmax(0, 1fr))` },
               children: windows.slice(0, 3).map((window, index) =>
                 jsx(QuotaGauge, {
                   remaining: window.remaining_percent,
                   label: window.label || '额度',
-                  resetAt: window.reset_at
+                  resetAt: window.reset_at,
+                  compact: true
                 }, `${window.label || 'quota'}-${index}`)
               )
             })
@@ -594,28 +596,30 @@ function fillDaily(rows, count = 30) {
   return result
 }
 
-function DailyTrend({ rows, summary }) {
+export function DailyTrend({ rows, summary }) {
   const data = fillDaily(rows, 30)
   const max = Math.max(1, ...data.map(row => totalTokens(row)))
+  const ticks = [0, 5, 10, 15, 20, 25, 29]
+  const noteStyle = { color: 'var(--ui-text-secondary)', fontSize: '13px', lineHeight: 1.35 }
   return jsx(Panel, {
-    className: 'flex h-full min-h-0 flex-col px-3 py-2.5',
+    className: 'h-full px-2.5 py-2',
     children: jsxs('div', {
-      className: 'flex h-full min-h-0 flex-col',
+      style: { display: 'flex', height: '100%', flexDirection: 'column', gap: '8px' },
       children: [
         jsxs('div', {
-          className: 'flex items-start justify-between gap-3',
+          className: 'flex flex-wrap items-start justify-between gap-2',
           children: [
             jsxs('div', {
               className: 'min-w-0',
               children: [
-                jsx('h3', { className: 'text-xs font-semibold', children: '30天 Token 趋势' }),
+                jsx('h3', { className: 'font-semibold', children: '最近 30 天 Token 趋势' }),
                 jsxs('div', {
                   className: 'mt-0.5 flex items-baseline gap-2',
                   children: [
-                    jsx('b', { className: 'text-base tabular-nums', children: fmtTokens(summary?.total_tokens) }),
+                    jsx('b', { className: 'uc-metric-value tabular-nums', children: fmtTokens(summary?.total_tokens) }),
                     jsx('span', {
                       className: 'text-[0.5625rem] tabular-nums',
-                      style: { color: 'var(--ui-text-quaternary)' },
+                      style: noteStyle,
                       children: `${fmtInteger(summary?.api_calls)} 调用`
                     })
                   ]
@@ -625,54 +629,47 @@ function DailyTrend({ rows, summary }) {
             jsx(TokenLegend, {})
           ]
         }),
-        jsxs('div', {
-          className: 'mt-2 grid min-h-0 flex-1 gap-x-1',
-          style: {
-            gridTemplateColumns: '3.75rem minmax(0, 1fr)',
-            gridTemplateRows: 'minmax(0, 1fr) 0.625rem'
-          },
-          children: [
-            jsxs('div', {
-              className: 'relative min-h-0 pr-1 text-right text-[0.4375rem] leading-none tabular-nums whitespace-nowrap',
-              style: { color: 'var(--ui-text-quaternary)' },
+        jsx('div', {
+          style: { overflowX: 'auto' },
+          children: jsxs('div', {
+            role: 'img',
+            'aria-label': `最近 30 天 Token 趋势，峰值 ${fmtInteger(max)} Token`,
+            style: {
+              display: 'grid', minWidth: '620px',
+              gridTemplateColumns: '68px minmax(0, 1fr)',
+              gridTemplateRows: '132px 20px', columnGap: '8px', rowGap: '8px',
+              paddingTop: '4px'
+            },
+            children: [
+              jsxs('div', {
+                className: 'tabular-nums',
+                style: { ...noteStyle, position: 'relative', fontSize: '13px', whiteSpace: 'nowrap' },
+                children: [
+                  jsx('span', { style: { position: 'absolute', right: 0, top: 0, transform: 'translateY(-50%)' }, children: fmtTokens(max) }),
+                  jsx('span', { style: { position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)' }, children: fmtTokens(max / 2) }),
+                  jsx('span', { style: { position: 'absolute', right: 0, bottom: 0, transform: 'translateY(50%)' }, children: '0' })
+                ]
+              }),
+              jsxs('div', {
+                style: { position: 'relative', display: 'flex', alignItems: 'flex-end', gap: '2px', height: '132px' },
               children: [
-                jsx('span', { className: 'absolute right-1 top-0', children: fmtTokens(max) }),
-                jsx('span', {
-                  className: 'absolute right-1 top-1/2',
-                  style: { transform: 'translateY(-50%)' },
-                  children: fmtTokens(max / 2)
-                }),
-                jsx('span', { className: 'absolute bottom-0 right-1', children: '0' })
-              ]
-            }),
-            jsxs('div', {
-              className: 'relative flex min-h-0 items-end gap-px',
-              children: [
-                jsx('span', {
-                  className: 'pointer-events-none absolute inset-x-0 top-0',
-                  style: { borderTop: '1px solid var(--ui-stroke-secondary)' }
-                }),
-                jsx('span', {
-                  className: 'pointer-events-none absolute inset-x-0 top-1/2',
-                  style: { borderTop: '1px solid var(--ui-stroke-secondary)' }
-                }),
-                jsx('span', {
-                  className: 'pointer-events-none absolute inset-x-0 bottom-0',
-                  style: { borderTop: '1px solid var(--ui-stroke-secondary)' }
-                }),
-                ...data.map(row => {
+                ...[0, 50, 100].map(top => jsx('span', {
+                  style: { position: 'absolute', left: 0, right: 0, top: `${top}%`, borderTop: '1px solid var(--ui-stroke-secondary)', pointerEvents: 'none' }
+                }, top)),
+                ...data.map((row, index) => {
                   const total = totalTokens(row)
                   const height = total > 0 ? Math.max(3, total / max * 100) : 0
                   return jsx('div', {
-                    className: 'group relative flex h-full min-w-0 flex-1 items-end',
+                    className: 'relative flex h-full min-w-0 flex-1 items-end',
                     style: { zIndex: 1 },
                     title: `${row.date} · ${fmtInteger(total)} Token · ${fmtInteger(row.api_calls)} 调用 · ${exactTokenTitle(row)}`,
                     children: jsx('div', {
-                      className: 'flex w-full flex-col-reverse overflow-hidden rounded-t-sm',
+                      className: 'uc-chart-bar flex w-full flex-col-reverse overflow-hidden rounded-t-sm',
                       style: {
                         height: `${height}%`,
                         minHeight: total > 0 ? '3px' : '0',
-                        background: 'var(--ui-stroke-secondary)'
+                        background: 'var(--ui-stroke-secondary)',
+                        animationDelay: `${index * 12}ms`
                       },
                       children: total > 0
                         ? TOKEN_SERIES
@@ -694,17 +691,21 @@ function DailyTrend({ rows, summary }) {
             }),
             jsx('span', {}),
             jsx('div', {
-              className: 'flex min-w-0 gap-px',
-              children: data.map((row, index) =>
-                jsx('span', {
-                  className: 'min-w-0 flex-1 text-center text-[0.4375rem] leading-[0.625rem]',
-                  style: { color: 'var(--ui-text-quaternary)' },
-                  children: index % 5 === 4 || index === data.length - 1 ? row.date.slice(8) : ''
-                }, row.date)
-              )
+              style: { position: 'relative', ...noteStyle, fontSize: '13px' },
+              children: ticks.map(index => jsx('span', {
+                className: 'tabular-nums',
+                style: {
+                  position: 'absolute', whiteSpace: 'nowrap',
+                  left: index === 0 ? 0 : index === 29 ? '100%' : `${(index + 0.5) / 30 * 100}%`,
+                  transform: index === 0 ? 'none' : index === 29 ? 'translateX(-100%)' : 'translateX(-50%)'
+                },
+                children: data[index].date.slice(5).replace('-', '/')
+              }, index))
             })
           ]
         })
+        }),
+        jsx('div', { style: noteStyle, children: '柱高表示每日 Token，总量按输入、输出、缓存写入和缓存读取分色。' })
       ]
     })
   })
@@ -717,6 +718,7 @@ function DistributionPanel({ rows, title }) {
     className: 'flex h-full min-h-0 flex-col px-2.5 py-2',
     children: jsxs('div', {
       className: 'flex h-full min-h-0 flex-col',
+      style: { minHeight: '112px' },
       children: [
         jsxs('div', {
           className: 'flex items-baseline justify-between gap-2',
@@ -731,7 +733,7 @@ function DistributionPanel({ rows, title }) {
         }),
         data.length
           ? jsx('div', {
-              className: 'mt-2 grid min-h-0 flex-1 gap-1.5',
+              className: 'mt-1 grid min-h-0 flex-1 gap-1',
               style: { gridTemplateRows: `repeat(${data.length}, minmax(0, 1fr))` },
               children: data.map((row, index) =>
                 jsxs('div', {
@@ -777,6 +779,7 @@ function ModelCyclePanel({ cycleMap, activeModel, prefs = DISPLAY_DEFAULT }) {
     className: 'flex h-full min-h-0 flex-col px-2.5 py-2',
     children: jsxs('div', {
       className: 'flex h-full min-h-0 flex-col',
+      style: { minHeight: '166px' },
       children: [
         jsxs('div', {
           className: 'flex items-baseline justify-between gap-2',
@@ -849,9 +852,9 @@ function DisplayPrefsPanel({ prefs, onChange, modelNames }) {
     onChange({ ...prefs, models: next.length === names.length ? null : next })
   }
   return jsx(Panel, {
-    className: 'px-2.5 py-2',
+    className: 'px-2.5 py-1.5',
     children: jsxs('div', {
-      className: 'flex flex-col gap-2',
+      className: 'flex flex-col gap-1',
       children: [
         jsxs('div', {
           className: 'flex items-baseline justify-between gap-2',
@@ -865,7 +868,7 @@ function DisplayPrefsPanel({ prefs, onChange, modelNames }) {
           ]
         }),
         jsxs('div', {
-          className: 'flex flex-wrap items-center gap-x-3 gap-y-1',
+            className: 'flex flex-wrap items-center gap-x-2 gap-y-0.5',
           children: [
             jsx('span', { className: 'w-10 shrink-0 text-[0.5625rem]', style: { color: 'var(--ui-text-quaternary)' }, children: '状态条' }),
             jsx(Check, { checked: prefs.showToday, onChange: () => toggleFlag('showToday'), children: '今日' }),
@@ -877,7 +880,7 @@ function DisplayPrefsPanel({ prefs, onChange, modelNames }) {
           ]
         }),
         jsxs('div', {
-          className: 'flex flex-wrap items-center gap-x-3 gap-y-1',
+            className: 'flex flex-wrap items-center gap-x-2 gap-y-0.5',
           children: [
             jsx('span', { className: 'w-10 shrink-0 text-[0.5625rem]', style: { color: 'var(--ui-text-quaternary)' }, children: '模型' }),
             jsx(Check, {
@@ -893,7 +896,7 @@ function DisplayPrefsPanel({ prefs, onChange, modelNames }) {
           ]
         }),
         jsxs('div', {
-          className: 'flex flex-wrap items-center gap-x-3 gap-y-1',
+            className: 'flex flex-wrap items-center gap-x-2 gap-y-0.5',
           children: [
             jsx('span', { className: 'w-10 shrink-0 text-[0.5625rem]', style: { color: 'var(--ui-text-quaternary)' }, children: '单位' }),
             jsx(Seg, {
@@ -939,19 +942,94 @@ function fmtGB(bytes) {
   return `${gb.toFixed(places)} GB`
 }
 
-function fillJmsDaily(rows, count = 30) {
+export function fillJmsDaily(rows, count = 30, now = new Date()) {
   const map = new Map((rows || []).map(row => [String(row.date), row]))
   const result = []
-  const today = new Date()
-  today.setHours(12, 0, 0, 0)
+  // The backend groups traffic in Shanghai days, regardless of the device timezone.
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(now)
+  const part = type => Number(parts.find(item => item.type === type).value)
+  const today = Date.UTC(part('year'), part('month') - 1, part('day'))
   for (let offset = count - 1; offset >= 0; offset -= 1) {
-    const date = new Date(today)
-    date.setDate(today.getDate() - offset)
-    const key = dateKey(date)
-    result.push(map.get(key) || { date: key, used_b: 0 })
+    const key = new Date(today - offset * 86_400_000).toISOString().slice(0, 10)
+    result.push(map.get(key) || { date: key, used_b: null })
   }
   return result
 }
+
+const USAGE_PAGE_CSS = `
+.uc-page {
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  --ui-text-quaternary: var(--ui-text-secondary);
+}
+.uc-page :where([class*="text-["], .text-xs) { font-size: 13px; line-height: 1.4; }
+.uc-page h1 { font-size: 20px; line-height: 1.2; letter-spacing: -0.02em; }
+.uc-page h3 { font-size: 14px; line-height: 1.3; letter-spacing: -0.01em; }
+.uc-page .uc-page-shell { animation: uc-page-in 360ms cubic-bezier(.2,.75,.25,1) both; }
+.uc-page .uc-page-hero {
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--ui-stroke-secondary);
+  border-radius: 10px;
+  background: linear-gradient(120deg, color-mix(in srgb, var(--ui-accent) 10%, transparent), transparent 48%);
+}
+.uc-page .uc-page-hero > div { flex-wrap: wrap; }
+.uc-page .uc-panel {
+  background: color-mix(in srgb, var(--ui-bg-elevated) 88%, transparent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--ui-text-primary) 4%, transparent), 0 8px 22px transparent;
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+.uc-page .uc-panel:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--ui-accent) 38%, var(--ui-stroke-secondary));
+  background: color-mix(in srgb, var(--ui-bg-elevated) 94%, var(--ui-accent) 6%);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--ui-accent) 9%, transparent);
+}
+.uc-page .uc-metric-card { position: relative; overflow: hidden; }
+.uc-page .uc-metric-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--ui-accent);
+  opacity: .72;
+}
+.uc-page .uc-metric-value { font-size: 22px; line-height: 1.15; letter-spacing: -0.025em; }
+.uc-page .uc-period-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr)); }
+.uc-page .uc-provider-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); }
+.uc-page .uc-distribution-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); }
+.uc-page .uc-status-pill { min-height: 22px; padding-inline: 8px; background: color-mix(in srgb, var(--ui-bg-secondary) 78%, transparent); }
+.uc-page .uc-status-dot--live { animation: uc-live 2.2s ease-in-out infinite; }
+.uc-page .uc-token-segment { transform-origin: left center; animation: uc-grow-x 520ms cubic-bezier(.2,.75,.25,1) both; }
+.uc-page .uc-chart-bar { transform-origin: center bottom; animation: uc-grow-y 620ms cubic-bezier(.2,.75,.25,1) both; }
+.uc-page .uc-quota-ring { animation: uc-ring 700ms cubic-bezier(.2,.75,.25,1) both; }
+.uc-page .uc-quota--compact { flex-direction: row; justify-content: center; gap: 6px; text-align: left; }
+.uc-page .uc-quota--compact > div { width: auto; flex: 1; }
+.uc-page .uc-model-content > *, .uc-page .uc-vpn-content > * { flex-shrink: 0; }
+.uc-page .uc-vpn-stat-value { font-size: 22px; line-height: 1.15; letter-spacing: -0.025em; }
+.uc-page .uc-vpn-stat-hint { white-space: normal; overflow-wrap: anywhere; }
+.uc-page .uc-vpn-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 8px; }
+.uc-page .uc-vpn-section-heading { flex-wrap: wrap; }
+.uc-page .uc-daily-detail-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr)); }
+@media (min-width: 900px) {
+  .uc-page .uc-model-main-grid { grid-template-columns: minmax(0, 2fr) minmax(290px, .9fr); }
+  .uc-page .uc-vpn-bottom-grid { grid-template-columns: minmax(0, 2fr) minmax(280px, .8fr); }
+  .uc-page .uc-vpn-stats { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+}
+@keyframes uc-page-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes uc-grow-x { from { transform: scaleX(0); opacity: .35; } to { transform: scaleX(1); opacity: 1; } }
+@keyframes uc-grow-y { from { transform: scaleY(0); opacity: .3; } to { transform: scaleY(1); opacity: 1; } }
+@keyframes uc-ring { from { stroke-dashoffset: 100; opacity: .3; } to { stroke-dashoffset: 0; opacity: 1; } }
+@keyframes uc-live { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ui-accent) 32%, transparent); } 50% { box-shadow: 0 0 0 4px transparent; } }
+@media (prefers-reduced-motion: reduce) {
+  .uc-page .uc-page-shell, .uc-page .uc-token-segment, .uc-page .uc-chart-bar,
+  .uc-page .uc-quota-ring, .uc-page .uc-status-dot--live { animation: none; }
+  .uc-page .uc-panel { transition: none; }
+}
+`
 
 function jmsQueryKey(profile) {
   return ['usage-center', 'jms', profile || 'default']
@@ -981,14 +1059,16 @@ function JmsConfigForm({ compact = false }) {
     }
   })
   return jsxs('form', {
-    className: compact ? 'flex min-w-0 flex-col gap-2' : 'flex min-w-0 flex-col gap-3',
+    className: compact ? 'flex min-w-0 flex-wrap items-stretch gap-2' : 'flex min-w-0 flex-col gap-3',
     onSubmit: event => {
       event.preventDefault()
       if (url.trim()) save.mutate()
     },
     children: [
       jsx('textarea', {
-        className: 'min-h-16 w-full resize-y rounded-md px-2.5 py-2 text-[0.75rem]',
+        className: compact
+          ? 'h-10 min-h-10 min-w-48 flex-1 resize-none rounded-md px-2.5 py-2 text-[0.75rem]'
+          : 'min-h-16 w-full resize-y rounded-md px-2.5 py-2 text-[0.75rem]',
         style: {
           background: 'var(--ui-bg-secondary)',
           border: '1px solid var(--ui-stroke-secondary)',
@@ -999,7 +1079,7 @@ function JmsConfigForm({ compact = false }) {
         onChange: event => setUrl(event.target.value)
       }),
       jsxs('div', {
-        className: 'flex items-center gap-2',
+        className: 'flex shrink-0 items-center gap-2',
         children: [
           jsx(Button, {
             type: 'submit',
@@ -1032,12 +1112,12 @@ function JmsStat({ title, value, hint }) {
           children: title
         }),
         jsx('div', {
-          className: 'truncate text-lg font-semibold leading-none tabular-nums',
+          className: 'uc-vpn-stat-value truncate text-lg font-semibold leading-none tabular-nums',
           children: value
         }),
         hint
           ? jsx('div', {
-              className: 'truncate text-[0.5625rem]',
+              className: 'uc-vpn-stat-hint text-[0.5625rem]',
               style: { color: 'var(--ui-text-quaternary)' },
               children: hint
             })
@@ -1047,103 +1127,113 @@ function JmsStat({ title, value, hint }) {
   })
 }
 
-function JmsDailyTrend({ rows }) {
-  const data = fillJmsDaily(rows, 30)
-  const max = Math.max(1, ...data.map(row => Number(row.used_b || 0)))
+export function JmsDailyTrend({ rows }) {
+  const data = rows
+  const sampled = data.filter(row => row.used_b != null)
+  const peak = Math.max(0, ...sampled.map(row => Number(row.used_b)))
+  const scaleMax = peak || 1_000_000_000
+  const total = sampled.reduce((sum, row) => sum + Number(row.used_b), 0)
+  const start = data[0].date
+  const end = data[data.length - 1].date
+  const ticks = [0, 5, 10, 15, 20, 25, 29]
+  const noteStyle = { color: 'var(--ui-text-secondary)', fontSize: '13px', lineHeight: 1.35 }
   return jsx(Panel, {
-    className: 'flex h-full min-h-0 flex-col px-3 py-2.5',
+    className: 'px-2.5 py-2',
     children: jsxs('div', {
-      className: 'flex h-full min-h-0 flex-col',
+      style: { display: 'flex', flexDirection: 'column', gap: '8px' },
       children: [
         jsxs('div', {
-          className: 'flex items-start justify-between gap-3',
+          style: { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px 20px' },
           children: [
             jsxs('div', {
-              className: 'min-w-0',
               children: [
-                jsx('h3', { className: 'text-xs font-semibold', children: '30天流量' }),
+                jsx('h3', { className: 'font-semibold', style: { fontSize: '15px' }, children: '最近 30 天流量' }),
                 jsx('div', {
-                  className: 'mt-0.5 text-[0.5625rem]',
-                  style: { color: 'var(--ui-text-quaternary)' },
-                  children: '本地采样差值 · 官方接口只有本周期总量'
+                  style: noteStyle,
+                  children: `${start} 至 ${end} · 上海时区 · 含今天`
                 })
               ]
             }),
             jsx('span', {
-              className: 'text-[0.5625rem] tabular-nums',
-              style: { color: 'var(--ui-text-quaternary)' },
-              children: `峰值 ${fmtGB(max)}`
+              className: 'tabular-nums',
+              style: noteStyle,
+              children: sampled.length ? `已记录 ${fmtGB(total)} · 单日峰值 ${fmtGB(peak)}` : '暂无采样差值'
             })
           ]
         }),
-        jsxs('div', {
-          className: 'mt-2 grid min-h-0 flex-1 gap-x-1',
-          style: {
-            gridTemplateColumns: '3.75rem minmax(0, 1fr)',
-            gridTemplateRows: 'minmax(0, 1fr) 0.625rem'
-          },
-          children: [
-            jsxs('div', {
-              className: 'relative min-h-0 pr-1 text-right text-[0.4375rem] leading-none tabular-nums whitespace-nowrap',
-              style: { color: 'var(--ui-text-quaternary)' },
-              children: [
-                jsx('span', { className: 'absolute right-1 top-0', children: fmtGB(max) }),
-                jsx('span', {
-                  className: 'absolute right-1 top-1/2',
-                  style: { transform: 'translateY(-50%)' },
-                  children: fmtGB(max / 2)
-                }),
-                jsx('span', { className: 'absolute bottom-0 right-1', children: '0' })
-              ]
-            }),
-            jsxs('div', {
-              className: 'relative flex min-h-0 items-end gap-px',
-              children: [
-                jsx('span', {
-                  className: 'pointer-events-none absolute inset-x-0 top-0',
-                  style: { borderTop: '1px solid var(--ui-stroke-secondary)' }
-                }),
-                jsx('span', {
-                  className: 'pointer-events-none absolute inset-x-0 top-1/2',
-                  style: { borderTop: '1px solid var(--ui-stroke-secondary)' }
-                }),
-                ...data.map(row => {
-                  const total = Number(row.used_b || 0)
-                  const height = total > 0 ? Math.max(3, total / max * 100) : 0
-                  return jsx('div', {
-                    className: 'group relative flex h-full min-w-0 flex-1 items-end',
-                    title: `${row.date} · ${fmtGB(total)}`,
-                    children: jsx('div', {
-                      className: 'w-full rounded-t-sm',
-                      style: {
-                        height: `${height}%`,
-                        minHeight: total > 0 ? '3px' : '0',
-                        background: 'var(--ui-accent)'
-                      }
-                    })
-                  }, row.date)
-                })
-              ]
-            }),
-            jsx('span', {}),
-            jsx('div', {
-              className: 'flex min-w-0 gap-px',
-              children: data.map((row, index) =>
-                jsx('span', {
-                  className: 'min-w-0 flex-1 text-center text-[0.4375rem] leading-[0.625rem]',
-                  style: { color: 'var(--ui-text-quaternary)' },
-                  children: index % 5 === 4 || index === data.length - 1 ? row.date.slice(8) : ''
-                }, row.date)
-              )
-            })
-          ]
+        jsx('div', {
+          style: { overflowX: 'auto' },
+          children: jsxs('div', {
+            role: 'img',
+            'aria-label': `最近 30 天每日流量，${start} 至 ${end}，${sampled.length} 天有采样差值，其余日期暂无数据`,
+            style: {
+              display: 'grid', minWidth: '440px',
+              gridTemplateColumns: '78px minmax(0, 1fr)',
+              gridTemplateRows: '120px 20px', columnGap: '8px', rowGap: '8px',
+              paddingTop: '4px'
+            },
+            children: [
+              jsxs('div', {
+                className: 'tabular-nums',
+                style: { ...noteStyle, position: 'relative', fontSize: '13px', whiteSpace: 'nowrap' },
+                children: [
+                  jsx('span', { style: { position: 'absolute', right: 0, top: 0, transform: 'translateY(-50%)' }, children: fmtGB(scaleMax) }),
+                  jsx('span', { style: { position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)' }, children: fmtGB(scaleMax / 2) }),
+                  jsx('span', { style: { position: 'absolute', right: 0, bottom: 0, transform: 'translateY(50%)' }, children: '0 GB' })
+                ]
+              }),
+              jsxs('div', {
+                style: { position: 'relative', display: 'flex', alignItems: 'flex-end', gap: '3px', height: '120px' },
+                children: [
+                  ...[0, 50, 100].map(top => jsx('span', {
+                    style: { position: 'absolute', left: 0, right: 0, top: `${top}%`, borderTop: '1px solid var(--ui-stroke-secondary)', pointerEvents: 'none' }
+                  }, top)),
+                  ...data.map((row, index) => {
+                    const known = row.used_b != null
+                    const value = Number(row.used_b || 0)
+                    return jsx('div', {
+                      title: `${row.date} · ${known ? fmtGB(value) : '暂无采样差值'}`,
+                      style: { position: 'relative', display: 'flex', alignItems: 'flex-end', height: '100%', minWidth: 0, flex: 1 },
+                      children: jsx('div', {
+                        className: 'uc-chart-bar',
+                        style: {
+                          width: '100%', height: known && value > 0 ? `${value / scaleMax * 100}%` : '3px',
+                          minHeight: '3px', borderRadius: '3px 3px 0 0',
+                          background: known ? 'var(--ui-accent)' : 'var(--ui-stroke-secondary)',
+                          opacity: known ? 1 : 0.55,
+                          animationDelay: `${index * 12}ms`
+                        }
+                      })
+                    }, row.date)
+                  })
+                ]
+              }),
+              jsx('span', {}),
+              jsx('div', {
+                style: { position: 'relative', ...noteStyle, fontSize: '13px' },
+                children: ticks.map(index => jsx('span', {
+                  className: 'tabular-nums',
+                  style: {
+                    position: 'absolute', whiteSpace: 'nowrap',
+                    left: index === 0 ? 0 : index === 29 ? '100%' : `${(index + 0.5) / 30 * 100}%`,
+                    transform: index === 0 ? 'none' : index === 29 ? 'translateX(-100%)' : 'translateX(-50%)'
+                  },
+                  children: data[index].date.slice(5).replace('-', '/')
+                }, index))
+              })
+            ]
+          })
+        }),
+        jsx('div', {
+          style: noteStyle,
+          children: `本地采样差值，非官方按日账单 · 已记录 ${sampled.length}/30 天 · 浅色标记表示暂无采样差值，不代表零流量`
         })
       ]
     })
   })
 }
 
-function JmsPage() {
+export function JmsPage() {
   const queryClient = useQueryClient()
   const profile = useHostState('profile')
   const query = useJms(30000)
@@ -1179,14 +1269,16 @@ function JmsPage() {
   }
   const usage = data?.usage
   const status = data?.status || 'unavailable'
-  const daily = [...(usage?.daily || [])].slice().reverse()
+  const windowDays = fillJmsDaily(usage?.daily, 30)
+  const daily = windowDays.filter(row => row.used_b != null).reverse()
   return jsx('div', {
-    className: 'h-full min-h-0 overflow-auto',
+    className: 'uc-page uc-vpn h-full min-h-0 overflow-auto',
     children: jsxs('div', {
-      className: 'mx-auto flex min-h-full max-w-[1600px] flex-col gap-2.5 p-3',
+      className: 'uc-page-shell uc-vpn-content mx-auto flex min-h-full max-w-[1600px] flex-col gap-2 p-2',
       children: [
+        jsx('style', { children: USAGE_PAGE_CSS }),
         jsxs('header', {
-          className: 'flex min-w-0 items-center justify-between gap-3',
+          className: 'uc-page-hero flex min-w-0 items-center justify-between gap-2',
           children: [
             jsxs('div', {
               className: 'flex min-w-0 items-center gap-2',
@@ -1250,8 +1342,7 @@ function JmsPage() {
           : null,
         usage
           ? jsxs('div', {
-              className: 'grid min-h-0 gap-2',
-              style: { gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' },
+              className: 'uc-vpn-stats',
               children: [
                 jsx(JmsStat, {
                   title: '本周期已用',
@@ -1267,15 +1358,7 @@ function JmsPage() {
                   title: '套餐',
                   value: fmtGB(usage.limit_b),
                   hint: `每月洛杉矶时间 ${usage.reset_day} 日 0 点重置`
-                })
-              ]
-            })
-          : null,
-        usage
-          ? jsxs('div', {
-              className: 'grid min-h-0 gap-2',
-              style: { gridTemplateColumns: 'minmax(220px, 0.7fr) repeat(2, minmax(0, 1fr))' },
-              children: [
+                }),
                 jsx(Panel, {
                   className: 'px-2.5 py-2',
                   children: jsx(QuotaGauge, {
@@ -1297,88 +1380,83 @@ function JmsPage() {
               ]
             })
           : null,
-        usage ? jsx(JmsDailyTrend, { rows: usage.daily }) : null,
-        usage
-          ? jsx(Panel, {
-              className: 'px-2.5 py-2',
-              children: jsxs('div', {
-                className: 'flex min-h-0 flex-col',
-                children: [
-                  jsxs('div', {
-                    className: 'flex items-baseline justify-between gap-2',
-                    children: [
-                      jsx('h3', { className: 'text-xs font-semibold', children: '每日明细' }),
-                      jsx('span', {
-                        className: 'text-[0.5rem]',
-                        style: { color: 'var(--ui-text-quaternary)' },
-                        children: '新的一天会在下次采样后出现'
-                      })
-                    ]
-                  }),
-                  daily.length
-                    ? jsxs('div', {
-                        className: 'mt-1.5 min-h-0 overflow-auto',
+        usage ? jsx(JmsDailyTrend, { rows: windowDays }) : null,
+        usage || data?.config?.configured
+          ? jsxs('div', {
+              className: 'uc-vpn-bottom-grid grid gap-2',
+              children: [
+                usage
+                  ? jsx(Panel, {
+                      className: 'px-2.5 py-2',
+                      children: jsxs('div', {
+                        className: 'flex min-h-0 flex-col gap-1.5',
                         children: [
                           jsxs('div', {
-                            className: 'grid gap-2 pb-1 text-[0.5rem]',
-                            style: {
-                              gridTemplateColumns: 'minmax(0, 1fr) minmax(6rem, 0.6fr)',
-                              color: 'var(--ui-text-quaternary)'
-                            },
+                            className: 'uc-vpn-section-heading flex items-baseline justify-between gap-2',
                             children: [
-                              jsx('span', { children: '日期' }),
-                              jsx('span', { className: 'text-right', children: '用量' })
+                              jsx('h3', { className: 'text-xs font-semibold', children: '每日明细（最近 30 天）' }),
+                              jsx('span', {
+                                className: 'text-[0.5rem]',
+                                style: { color: 'var(--ui-text-quaternary)' },
+                                children: '窗口内全部采样日'
+                              })
                             ]
                           }),
-                          daily.slice(0, 31).map(row =>
-                            jsxs('div', {
-                              className: 'grid items-center gap-2 border-t py-1 text-[0.625rem]',
-                              style: {
-                                gridTemplateColumns: 'minmax(0, 1fr) minmax(6rem, 0.6fr)',
-                                borderColor: 'var(--ui-stroke-secondary)'
-                              },
-                              children: [
-                                jsx('span', { className: 'tabular-nums', children: row.date }),
-                                jsx('span', {
-                                  className: 'text-right font-semibold tabular-nums',
-                                  children: fmtGB(row.used_b)
-                                })
-                              ]
-                            }, row.date)
-                          )
+                          daily.length
+                            ? jsx('div', {
+                                className: 'uc-daily-detail-grid grid gap-1.5',
+                                children: daily.map(row =>
+                                  jsxs('div', {
+                                    className: 'flex min-w-0 items-baseline justify-between gap-2 rounded-md border px-2 py-1',
+                                    style: { borderColor: 'var(--ui-stroke-secondary)' },
+                                    title: `${row.date} · ${fmtGB(row.used_b)}`,
+                                    children: [
+                                      jsx('span', {
+                                        className: 'truncate tabular-nums',
+                                        children: row.date.slice(5).replace('-', '/')
+                                      }),
+                                      jsx('span', {
+                                        className: 'shrink-0 font-semibold tabular-nums',
+                                        children: fmtGB(row.used_b)
+                                      })
+                                    ]
+                                  }, row.date)
+                                )
+                              })
+                            : jsx('div', {
+                                className: 'py-3 text-center text-[0.6875rem]',
+                                style: { color: 'var(--ui-text-quaternary)' },
+                                children: '最近 30 天暂无采样差值。保持 Desktop 打开，或等定时采样。'
+                              })
                         ]
                       })
-                    : jsx('div', {
-                        className: 'py-6 text-center text-[0.6875rem]',
-                        style: { color: 'var(--ui-text-quaternary)' },
-                        children: '还没有跨天差值。保持 Desktop 打开，或等定时采样。'
+                    })
+                  : null,
+                data?.config?.configured
+                  ? jsx(Panel, {
+                      className: 'px-2.5 py-2',
+                      children: jsxs('div', {
+                        className: 'flex flex-col gap-2',
+                        children: [
+                          jsxs('div', {
+                            className: 'flex items-baseline justify-between gap-2',
+                            children: [
+                              jsx('h3', { className: 'text-xs font-semibold', children: '账号' }),
+                              jsx(Button, {
+                                size: 'sm',
+                                variant: 'secondary',
+                                disabled: forget.isPending,
+                                onClick: () => forget.mutate(),
+                                children: '清除本机密钥'
+                              })
+                            ]
+                          }),
+                          jsx(JmsConfigForm, { compact: true })
+                        ]
                       })
-                ]
-              })
-            })
-          : null,
-        data?.config?.configured
-          ? jsx(Panel, {
-              className: 'px-2.5 py-2',
-              children: jsxs('div', {
-                className: 'flex flex-col gap-2',
-                children: [
-                  jsxs('div', {
-                    className: 'flex items-baseline justify-between gap-2',
-                    children: [
-                      jsx('h3', { className: 'text-xs font-semibold', children: '账号' }),
-                      jsx(Button, {
-                        size: 'sm',
-                        variant: 'secondary',
-                        disabled: forget.isPending,
-                        onClick: () => forget.mutate(),
-                        children: '清除本机密钥'
-                      })
-                    ]
-                  }),
-                  jsx(JmsConfigForm, { compact: true })
-                ]
-              })
+                    })
+                  : null
+              ]
             })
           : null,
         data?.reason
@@ -1483,7 +1561,7 @@ function useSummary(interval = 30000) {
   })
 }
 
-function UsageCenterPage() {
+export function UsageCenterPage() {
   const [prefs, setPrefs] = useDisplayPrefs()
   const model = useHostState('model')
   const profile = useHostState('profile')
@@ -1526,15 +1604,13 @@ function UsageCenterPage() {
   const runtimeProvider = data.current_session?.provider
 
   return jsx('div', {
-    className: 'h-full min-h-0 overflow-hidden',
+    className: 'uc-page uc-model h-full min-h-0 overflow-auto',
     children: jsxs('div', {
-      className: 'mx-auto grid h-full min-h-0 max-w-[1600px] gap-2.5 p-3',
-      style: {
-        gridTemplateRows: 'auto auto minmax(140px, 1fr) minmax(132px, 0.78fr) minmax(120px, 0.68fr) minmax(108px, 0.62fr) auto auto'
-      },
+      className: 'uc-page-shell uc-model-content mx-auto flex min-h-full max-w-[1600px] flex-col gap-2 p-2',
       children: [
+        jsx('style', { children: USAGE_PAGE_CSS }),
         jsxs('header', {
-          className: 'flex min-w-0 items-center justify-between gap-3',
+          className: 'uc-page-hero flex min-w-0 items-center justify-between gap-2',
           children: [
             jsxs('div', {
               className: 'flex min-w-0 items-center gap-2',
@@ -1588,16 +1664,20 @@ function UsageCenterPage() {
           ]
         }),
         jsx(PeriodRibbon, { periods, rolling }),
-        jsx(DailyTrend, { rows: usage.daily, summary: rolling['30d'] }),
-        jsx(ModelCyclePanel, {
-          cycleMap: usage.cycle_by_model,
-          activeModel: data.current_session?.model || model,
-          prefs
+        jsxs('div', {
+          className: 'uc-model-main-grid grid min-h-0 gap-2',
+          children: [
+            jsx(DailyTrend, { rows: usage.daily, summary: rolling['30d'] }),
+            jsx(ModelCyclePanel, {
+              cycleMap: usage.cycle_by_model,
+              activeModel: data.current_session?.model || model,
+              prefs
+            })
+          ]
         }),
         [prefs.showCodex, prefs.showGrok, prefs.showClaude].some(Boolean)
           ? jsxs('div', {
-          className: 'grid min-h-0 gap-2.5',
-          style: { gridTemplateColumns: `repeat(${[prefs.showCodex, prefs.showGrok, prefs.showClaude].filter(Boolean).length}, minmax(0, 1fr))` },
+          className: 'uc-provider-grid grid min-h-0 gap-2',
           children: [
             prefs.showCodex ? jsx(ProviderPanel, {
               title: 'OpenAI Codex',
@@ -1625,20 +1705,19 @@ function UsageCenterPage() {
           ]
         }) : null,
         jsxs('div', {
-          className: 'grid min-h-0 gap-2.5',
-          style: { gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' },
+          className: 'uc-distribution-grid grid min-h-0 gap-2',
           children: [
             jsx(DistributionPanel, { rows: usage.by_provider, title: 'Provider占比' }),
-            jsx(DistributionPanel, { rows: usage.by_source, title: '平台占比' })
+            jsx(DistributionPanel, { rows: usage.by_source, title: '平台占比' }),
+            jsx(DisplayPrefsPanel, {
+              prefs,
+              onChange: setPrefs,
+              modelNames: Object.keys(usage.cycle_by_model || usage.by_model_periods || {})
+            })
           ]
         }),
-        jsx(DisplayPrefsPanel, {
-          prefs,
-          onChange: setPrefs,
-          modelNames: Object.keys(usage.cycle_by_model || usage.by_model_periods || {})
-        }),
         jsxs('div', {
-          className: 'flex min-w-0 items-center justify-between gap-3 text-[0.5rem]',
+          className: 'flex min-w-0 flex-wrap items-center justify-between gap-2 px-1 text-[0.5rem]',
           style: { color: 'var(--ui-text-quaternary)' },
           children: [
             jsx(TokenLegend, {}),
